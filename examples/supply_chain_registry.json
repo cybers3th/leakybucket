@@ -1,0 +1,21 @@
+{
+  "trusted": [
+    { "kind": "provider", "name": "anthropic" },
+    { "kind": "provider", "name": "openai" },
+    { "kind": "model",    "name": "claude-opus-4-7" },
+    { "kind": "model",    "name": "claude-sonnet-4-5" },
+    { "kind": "model",    "name": "gpt-4o" },
+    { "kind": "tool",     "name": "read_file",  "versions": ["1.0", "1.1"] },
+    { "kind": "tool",     "name": "http_fetch", "versions": ["1.0"] },
+    { "kind": "tool",     "name": "db_read",    "versions": ["1.0"] },
+    { "kind": "tool",     "name": "wire_transfer", "versions": ["2.0"] },
+    { "kind": "mcp_server", "name": "corp-mcp",  "versions": ["3.4.0"], "sha256": "" }
+  ],
+  "blocked": [
+    { "kind": "provider",   "name": "badllm.example" },
+    { "kind": "mcp_server", "name": "evil-mcp-server" }
+  ],
+  "advisories": [
+    { "kind": "tool", "name": "translate", "message": "CVE-YYYY-XXXX pending — verify version" }
+  ]
+}
