@@ -266,10 +266,10 @@ def run(split: str | None = None, categories: set[str] | None = None,
     gw = Gateway()
     # Register a small trusted-supply-chain registry so unknown-provider tests fire
     reg = SupplyChainRegistry()
-    reg.add(TrustedArtifact(kind="provider", name="anthropic"))
-    reg.add(TrustedArtifact(kind="provider", name="openai"))
-    reg.add(TrustedArtifact(kind="model", name="claude-opus-4-7"))
-    reg.add(TrustedArtifact(kind="model", name="gpt-4o"))
+    reg.add(TrustedArtifact(kind="provider", name="provider-a"))
+    reg.add(TrustedArtifact(kind="provider", name="provider-b"))
+    reg.add(TrustedArtifact(kind="model",    name="model-a-large"))
+    reg.add(TrustedArtifact(kind="model",    name="model-b-large"))
     gw.supply_chain = SupplyChainDetector(reg, default_allow_unknown=False)
     gw.tool_firewall.supply_chain = gw.supply_chain
     # Register every tool name that appears in benign examples so the supply-chain

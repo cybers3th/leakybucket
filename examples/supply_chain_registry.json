@@ -1,10 +1,10 @@
 {
   "trusted": [
-    { "kind": "provider", "name": "anthropic" },
-    { "kind": "provider", "name": "openai" },
-    { "kind": "model",    "name": "claude-opus-4-7" },
-    { "kind": "model",    "name": "claude-sonnet-4-5" },
-    { "kind": "model",    "name": "gpt-4o" },
+    { "kind": "provider", "name": "provider-a" },
+    { "kind": "provider", "name": "provider-b" },
+    { "kind": "model",    "name": "model-a-large" },
+    { "kind": "model",    "name": "model-a-medium" },
+    { "kind": "model",    "name": "model-b-large" },
     { "kind": "tool",     "name": "read_file",  "versions": ["1.0", "1.1"] },
     { "kind": "tool",     "name": "http_fetch", "versions": ["1.0"] },
     { "kind": "tool",     "name": "db_read",    "versions": ["1.0"] },

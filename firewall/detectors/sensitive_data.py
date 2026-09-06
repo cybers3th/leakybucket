@@ -49,7 +49,7 @@ SECRET_PATTERNS: list[_SecretPattern] = [
     _sp("stripe_live",              r"\bsk_live_[0-9a-zA-Z]{24,}\b"),
     _sp("stripe_test",              r"\bsk_test_[0-9a-zA-Z]{24,}\b", severity="high"),
     _sp("openai_api_key",           r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b"),
-    _sp("anthropic_api_key",        r"\bsk-ant-(?:api\d\d)?-[A-Za-z0-9_\-]{40,}\b"),
+    _sp("vendor_prefixed_key",      r"\bsk-[a-z]{2,10}-(?:api\d\d)?-[A-Za-z0-9_\-]{40,}\b"),
     _sp("hf_token",                 r"\bhf_[A-Za-z0-9]{30,}\b"),
     _sp("mongodb_uri",              r"mongodb(?:\+srv)?://[^\s:@]+:[^\s@]+@[^\s/]+"),
     _sp("postgres_uri",             r"postgres(?:ql)?://[^\s:@]+:[^\s@]+@[^\s/]+"),

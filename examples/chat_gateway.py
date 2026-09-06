@@ -36,8 +36,8 @@ def main():
                                           origin="kb://runbook.md", tenant="acme"),
                        )])),
         ("output with secret",
-         SecurityEvent(actor=actor, model="claude-opus-4-7",
-                       output_text="Sure — here's a token you can use: sk-ant-api03-A9dTIz3lY-abcdEFGHijklMNOPqrstUVwxyzabcdEFGHIJKLmnopqRSTUVwxyzABCD.")),
+         SecurityEvent(actor=actor, model="model-a-large",
+                       output_text="Sure — here's a token you can use: sk-XxYzABCDefghijklMNOPqrstUVwxyzabcdEFGHIJKLmnopqRSTUVwxyzABCD.")),
     ]
     for label, ev in cases:
         if ev.output_text:

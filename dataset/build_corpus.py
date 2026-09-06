@@ -35,6 +35,9 @@ from dataset.generators import (
     dlp_realistic as gen_dlp2,
     injection_families as gen_inj,
     benign_realistic as gen_brl,
+    v03_expansion as gen_v03,
+    agentic_asi as gen_asi,
+    mass_expansion as gen_mass,
 )
 from dataset.mutations import mutate
 from dataset.schema import Example, dumps
@@ -61,6 +64,9 @@ def _all_examples() -> Iterable[Example]:
     yield from gen_dlp2.generate()
     yield from gen_inj.generate()
     yield from gen_brl.generate()
+    yield from gen_v03.generate()
+    yield from gen_asi.generate()
+    yield from gen_mass.generate()
 
 
 def _split_key(ex: Example) -> str:

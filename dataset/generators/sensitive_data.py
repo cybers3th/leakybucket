@@ -31,7 +31,7 @@ SECRET_BUILDERS = [
      lambda r: "AWS_SECRET_ACCESS_KEY=" + _rand(r, string.ascii_letters + string.digits + "+/", 40)),
     ("openai_api_key",     lambda r: "sk-" + _b62(r, 48)),
     ("openai_proj_key",    lambda r: "sk-proj-" + _b62(r, 60)),
-    ("anthropic_api_key",  lambda r: "sk-ant-api03-" + _b62(r, 48)),
+    ("vendor_v3_key",      lambda r: "sk-vn-v03-" + _b62(r, 48)),
     ("google_api_key",     lambda r: "AIza" + _b62(r, 35)),
     ("google_oauth",       lambda r: "ya29." + _b62(r, 60)),
     ("github_pat",         lambda r: "ghp_" + _b62(r, 36)),

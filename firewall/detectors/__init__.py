@@ -8,10 +8,14 @@ from firewall.detectors.tool_security import ToolSecurityDetector
 from firewall.detectors.supply_chain import SupplyChainDetector
 from firewall.detectors.poisoning import PoisoningDetector
 from firewall.detectors.consumption import ConsumptionDetector
+from firewall.detectors.ai_specific import AISpecificDetector
+from firewall.detectors.infra_exposure import InfraExposureDetector
+from firewall.detectors.agentic import AgenticSecurityDetector
 
 __all__ = [
     "PromptInjectionDetector", "SensitiveDataDetector", "OutputSecurityDetector",
     "SystemPromptLeakDetector", "RAGSecurityDetector", "MisinformationDetector",
     "ToolSecurityDetector", "SupplyChainDetector", "PoisoningDetector",
-    "ConsumptionDetector",
+    "ConsumptionDetector", "AISpecificDetector", "InfraExposureDetector",
+    "AgenticSecurityDetector",
 ]

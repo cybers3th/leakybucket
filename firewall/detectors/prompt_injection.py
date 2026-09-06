@@ -49,7 +49,7 @@ DIRECT_OVERRIDE = _PatternGroup(
         r"\bforget\s+(?:everything|all\s+(?:previous|prior|above))\b",
         r"\bstop\s+following\s+(?:the|your)\s+(?:previous|system|earlier)\s+(?:instructions?|rules?)\b",
         r"\boverride\s+(?:the\s+)?(?:system|previous|safety|prior)\s+(?:prompt|instructions?|rules?|policy)\b",
-        r"\bnew\s+instructions?\s+(?:from\s+(?:the\s+)?(?:admin|developer|anthropic|openai|system))?\s*[:\-]",
+        r"\bnew\s+instructions?\s+(?:from\s+(?:the\s+)?(?:admin|developer|vendor|provider|system))?\s*[:\-]",
         r"\byour\s+new\s+(?:role|task|instructions?|objective|purpose|goal)\s+is\b",
         r"\byou\s+are\s+now\s+(?:a|an|the)\s+[a-z ]{3,40}?\s+(?:without|with\s+no|that\s+ignores)\b",
         # Spanish
@@ -160,11 +160,11 @@ INSTRUCTION_HIERARCHY = _PatternGroup(
     slug="hierarchy_manipulation",
     severity="high", confidence=0.8, technique="hierarchy",
     patterns=_p(
-        r"\bthis\s+is\s+(?:an?\s+)?(?:system|admin|root|anthropic|openai)\s+(?:message|instruction|override)\b",
+        r"\bthis\s+is\s+(?:an?\s+)?(?:system|admin|root|vendor|provider)\s+(?:message|instruction|override)\b",
         r"\b\[?(?:system|admin|root|developer)\]?\s*[:>]\s*",
         r"\bhigher[-\s]priority\s+(?:instructions?|rules?)\b",
         r"\bthe\s+(?:real|actual|true)\s+(?:system|instructions?)\s+(?:is|are)\b",
-        r"\bfrom\s+(?:the\s+)?(?:owner|creator|anthropic|openai|admin)\s*[:\-]",
+        r"\bfrom\s+(?:the\s+)?(?:owner|creator|vendor|provider|admin)\s*[:\-]",
     ),
 )
 

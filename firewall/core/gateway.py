@@ -27,7 +27,8 @@ from firewall.detectors import (
     PromptInjectionDetector, SensitiveDataDetector, OutputSecurityDetector,
     SystemPromptLeakDetector, RAGSecurityDetector, MisinformationDetector,
     ToolSecurityDetector, SupplyChainDetector, PoisoningDetector,
-    ConsumptionDetector,
+    ConsumptionDetector, AISpecificDetector, InfraExposureDetector,
+    AgenticSecurityDetector,
 )
 from firewall.enforcement.rate_limits import RateLimiter
 from firewall.enforcement.tool_firewall import (
@@ -64,6 +65,9 @@ class Gateway:
         self.tool_sec = ToolSecurityDetector()
         self.poison = PoisoningDetector()
         self.consume = ConsumptionDetector()
+        self.ai_spec = AISpecificDetector()
+        self.infra   = InfraExposureDetector()
+        self.agentic = AgenticSecurityDetector()
 
         self.tool_firewall = ToolFirewall(
             policy_engine=self.policy, risk_engine=self.risk,
@@ -116,6 +120,12 @@ class Gateway:
         for d in self.misinfo.scan(event):
             event.add_detection(d)
         for d in self.consume.scan(event):
+            event.add_detection(d)
+        for d in self.ai_spec.scan(event):
+            event.add_detection(d)
+        for d in self.infra.scan(event):
+            event.add_detection(d)
+        for d in self.agentic.scan(event):
             event.add_detection(d)
         # Update behavior — output stage may raise the chain
         self.behavior.observe(event, action="model_output", detail=event.model)
@@ -189,6 +199,12 @@ class Gateway:
         # pass through to a downstream tool. The detector already knows how to
         # inspect input_text / tool_args / tool_result.
         for d in self.out_sec.scan(event):
+            event.add_detection(d)
+        for d in self.ai_spec.scan(event):
+            event.add_detection(d)
+        for d in self.infra.scan(event):
+            event.add_detection(d)
+        for d in self.agentic.scan(event):
             event.add_detection(d)
         # Misinformation is output-only in scope; skipped here.
         if self.supply_chain:
