@@ -4,3 +4,4 @@ audit.jsonl
 eval/last_report.json
 dataset/corpus/
 firewall/ml/model.json
+tests/
