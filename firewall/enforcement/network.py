@@ -58,20 +58,31 @@ class EgressController:
         proto = (p.scheme or "").lower()
         if proto not in self.policy.allowed_protocols:
             return False, f"protocol '{proto}' not allowed"
-        host = (p.hostname or "").lower()
+        try:
+            host = (p.hostname or "").lower().rstrip(".").encode("idna").decode("ascii")
+            port = p.port if p.port is not None else (443 if proto == "https" else 80)
+        except (ValueError, UnicodeError):
+            return False, "invalid URL host or port"
+        if p.username is not None or p.password is not None:
+            return False, "URL credentials are not allowed"
+        if any(c.isspace() or ord(c) < 32 for c in url) or "\\" in url:
+            return False, "ambiguous URL characters"
         if not host:
             return False, "no host"
         # Explicit host blocklist
-        if host in BLOCKED_HOSTNAMES:
+        if host in BLOCKED_HOSTNAMES or host.endswith(".localhost"):
             return False, f"host '{host}' blocked"
         # IP-literal checks
         ip_obj = _maybe_ip(host)
         if ip_obj is not None and self.policy.block_private_addresses:
+            if getattr(ip_obj, "ipv4_mapped", None) is not None:
+                ip_obj = ip_obj.ipv4_mapped
+            if not ip_obj.is_global:
+                return False, f"IP '{host}' is not globally routable"
             for net in BLOCKED_IPS:
                 if ip_obj in net:
                     return False, f"IP '{host}' in blocked range {net}"
         # Port check
-        port = p.port or (443 if proto == "https" else 80)
         if port not in self.policy.allowed_ports:
             return False, f"port {port} not allowed"
         # Host allowlist
@@ -79,6 +90,27 @@ class EgressController:
             return False, "no hosts allowlisted"
         if not any(fnmatch.fnmatch(host, pat) for pat in self.policy.allowed_hosts):
             return False, f"host '{host}' not in allowlist"
+        return True, ""
+
+    def check_resolved(self, url: str, addresses: list[str]) -> tuple[bool, str]:
+        """Check the exact DNS results that the transport intends to connect to.
+
+        The caller must connect only to these validated addresses, keep TLS
+        hostname verification, and repeat validation on every redirect.
+        """
+        allowed, reason = self.check(url)
+        if not allowed:
+            return allowed, reason
+        if not addresses:
+            return False, "no resolved addresses supplied"
+        for address in addresses:
+            parsed = _maybe_ip(address)
+            if parsed is None:
+                return False, "resolved destination is not an IP address"
+            if getattr(parsed, "ipv4_mapped", None) is not None:
+                parsed = parsed.ipv4_mapped
+            if self.policy.block_private_addresses and not parsed.is_global:
+                return False, "resolved destination is not globally routable"
         return True, ""
 
 

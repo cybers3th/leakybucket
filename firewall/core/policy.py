@@ -169,6 +169,15 @@ def default_baseline_policy() -> Policy:
                 action="block", priority=1000,
             ),
             PolicyRule(
+                id="semantic_injection_flagged_blocks",
+                description="A configured injection classifier's positive label cannot silently allow content.",
+                when={"all_of": [
+                    {"field": "detections.detector", "op": "eq", "value": "ml_backstop"},
+                    {"field": "detections.subcategory", "op": "eq", "value": "ml_flagged"},
+                ]},
+                action="block", priority=990,
+            ),
+            PolicyRule(
                 id="high_risk_score",
                 description="Risk score >= 85 blocks.",
                 when={"field": "risk_score", "op": "gte", "value": 85},

@@ -31,6 +31,8 @@ from firewall.detectors import (
     AgenticSecurityDetector,
 )
 from firewall.enforcement.rate_limits import RateLimiter
+from firewall.enforcement.output_validators import OutputConstraints
+from firewall.ml.classifier import MLDetector
 from firewall.enforcement.tool_firewall import (
     ApprovalRequired, ToolBlocked, ToolFirewall,
 )
@@ -47,6 +49,9 @@ class Gateway:
         trust_resolver: TrustResolver | None = None,
         supply_chain: SupplyChainDetector | None = None,
         approval_callback: Callable[[SecurityEvent], bool] | None = None,
+        injection_classifier=None,
+        output_constraints: OutputConstraints | None = None,
+        output_validators: tuple[Callable[[SecurityEvent], bool], ...] = (),
     ):
         self.audit = AuditLog(path=audit_path, echo=audit_echo)
         self.policy = PolicyEngine(policies or [default_baseline_policy()])
@@ -55,6 +60,9 @@ class Gateway:
         self.trust = trust_resolver or TrustResolver()
         self.supply_chain = supply_chain
         self.rate = RateLimiter()
+        self.semantic = MLDetector(injection_classifier) if injection_classifier is not None else None
+        self.output_constraints = output_constraints or OutputConstraints()
+        self.output_validators = tuple(output_validators)
 
         self.pi = PromptInjectionDetector()
         self.dlp = SensitiveDataDetector()
@@ -75,6 +83,8 @@ class Gateway:
             trust=self.trust, supply_chain=self.supply_chain,
             rate_limiter=self.rate,
             approval_callback=approval_callback,
+            output_constraints=self.output_constraints,
+            injection_detector=self.semantic,
         )
 
     # =========================================================================
@@ -91,6 +101,8 @@ class Gateway:
         If decision == SANITIZE, use event.sanitized_text as the input instead.
         """
         event.stage = "input"
+        if self._reject_oversize(event):
+            return event
         self._normalize(event)
         self._provenance(event)
         self._run_input_detectors(event)
@@ -106,6 +118,8 @@ class Gateway:
         policy. Callers must not deliver output_text if decision == BLOCK.
         """
         event.stage = "output"
+        if self._reject_oversize(event):
+            return event
         # Output is model-generated → untrusted from the perspective of downstream
         if event.source is None:
             event.source = Source(kind=SourceKind.MODEL_OUTPUT, origin=event.model or "model")
@@ -119,14 +133,13 @@ class Gateway:
             event.add_detection(d)
         for d in self.misinfo.scan(event):
             event.add_detection(d)
-        for d in self.consume.scan(event):
-            event.add_detection(d)
         for d in self.ai_spec.scan(event):
             event.add_detection(d)
         for d in self.infra.scan(event):
             event.add_detection(d)
         for d in self.agentic.scan(event):
             event.add_detection(d)
+        self._validate_output(event)
         # Update behavior — output stage may raise the chain
         self.behavior.observe(event, action="model_output", detail=event.model)
         for d in self.behavior.match_chains(event):
@@ -152,13 +165,24 @@ class Gateway:
         ev = SecurityEvent(
             actor=actor,
             source=source,
-            tool_call=ToolCall(tool=tool, arguments=arguments or {}),
+            tool_call=ToolCall(tool=tool, arguments={} if arguments is None else arguments),
         )
         return self.tool_firewall.call(ev)
 
     # =========================================================================
     # Internal stages
     # =========================================================================
+
+    def _reject_oversize(self, event: SecurityEvent) -> bool:
+        signals = self.consume.scan(event)
+        if any(d.subcategory == "inspection_budget_exceeded" for d in signals):
+            event.detections.extend(signals)
+            event.decision = Decision.BLOCK
+            event.reasons.append("Inspection resource budget exceeded")
+            self.audit.write(event)
+            return True
+        event.detections.extend(signals)
+        return False
 
     def _normalize(self, event: SecurityEvent) -> None:
         # We wrap untrusted context docs so downstream never mistakes them
@@ -192,8 +216,6 @@ class Gateway:
             event.add_detection(d)
         for d in self.sys_leak.scan(event):
             event.add_detection(d)
-        for d in self.consume.scan(event):
-            event.add_detection(d)
         # Output-security patterns are also relevant on the input side —
         # a user prompt that contains a SQLi/command payload should not silently
         # pass through to a downstream tool. The detector already knows how to
@@ -206,6 +228,8 @@ class Gateway:
             event.add_detection(d)
         for d in self.agentic.scan(event):
             event.add_detection(d)
+        if self.semantic is not None:
+            event.detections.extend(self.semantic.scan(event))
         # Misinformation is output-only in scope; skipped here.
         if self.supply_chain:
             for d in self.supply_chain.scan(event):
@@ -216,6 +240,21 @@ class Gateway:
         # Attack-chain check with the current session state
         for d in self.behavior.match_chains(event):
             event.add_detection(d)
+
+    def _validate_output(self, event: SecurityEvent, complete: bool = True) -> None:
+        constraints = self.output_constraints if complete else replace(self.output_constraints, schema=None)
+        event.detections.extend(constraints.scan(event))
+        for validator in self.output_validators if complete else ():
+            try:
+                valid = validator(event) is True
+            except Exception:
+                valid = False
+            if not valid:
+                event.add_detection(Detection(
+                    detector="application_output", category="output_security",
+                    subcategory="application_validator_rejected", severity="critical",
+                    confidence=1.0, message="Application output validator rejected the response",
+                ))
 
     def _score_and_decide(self, event: SecurityEvent) -> None:
         # Track classifications from detections

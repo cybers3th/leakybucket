@@ -7,6 +7,7 @@ decision. That keeps this layer transport-agnostic (stdio, HTTP/SSE, etc.)
 """
 from __future__ import annotations
 
+import copy
 import enum
 import hashlib
 import json
@@ -32,7 +33,11 @@ class MCPServerDef:
     owner: str = ""
     allowed_capabilities: list[str] = field(default_factory=list)   # tools, resources, prompts, sampling
     allowed_hosts: list[str] = field(default_factory=list)          # for network-capable tools
+    allowed_resource_uris: list[str] = field(default_factory=list)  # custom resource URI patterns
     allow_sampling: bool = False    # if False, sampling/createMessage requests are blocked
+    max_sampling_tokens: int = 4096
+    max_sampling_messages: int = 32
+    max_sampling_calls_per_minute: int = 10
     max_tool_calls_per_minute: int = 60
     tools: dict[str, "MCPToolFingerprint"] = field(default_factory=dict)
     prompts: dict[str, str] = field(default_factory=dict)           # name -> sha256
@@ -56,6 +61,8 @@ class MCPToolFingerprint:
     allowed_hosts: list[str] = field(default_factory=list)
     allowed_resources: list[str] = field(default_factory=list)
     notes: str = ""
+    definition_hash: str = ""
+    input_schema: dict[str, Any] | None = None
 
     @classmethod
     def compute(cls, tool: dict[str, Any], risk_level: str = "medium",
@@ -67,6 +74,10 @@ class MCPToolFingerprint:
         return cls(
             name=tool.get("name", ""),
             description_hash=hashlib.sha256(desc.encode("utf-8", "replace")).hexdigest(),
+            definition_hash=hashlib.sha256(json.dumps(
+                tool, sort_keys=True, ensure_ascii=False, allow_nan=False
+            ).encode("utf-8")).hexdigest(),
+            input_schema=copy.deepcopy(schema),
             schema_hash=hashlib.sha256(
                 json.dumps(schema, sort_keys=True, default=str).encode("utf-8", "replace")
             ).hexdigest(),

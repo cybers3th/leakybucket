@@ -9,6 +9,7 @@ know what they're looking at.
 from __future__ import annotations
 
 import hashlib
+import html
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -67,7 +68,7 @@ def wrap_untrusted(content: str, source: Source) -> str:
     """
     clean = strip_wrapping_markers(content)
     return (
-        UNTRUSTED_OPEN.format(origin=source.origin or "unknown", kind=source.kind.value)
+        UNTRUSTED_OPEN.format(origin=html.escape(source.origin or "unknown", quote=True), kind=source.kind.value)
         + clean
         + UNTRUSTED_CLOSE
     )

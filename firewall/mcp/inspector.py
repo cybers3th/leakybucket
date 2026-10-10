@@ -13,6 +13,7 @@ classic confused-deputy shape.
 from __future__ import annotations
 
 import fnmatch
+import json
 import hashlib
 import re
 import urllib.parse
@@ -33,6 +34,8 @@ from firewall.detectors import (
     PromptInjectionDetector, SensitiveDataDetector, OutputSecurityDetector,
     ToolSecurityDetector, PoisoningDetector,
 )
+from firewall.enforcement.network import EgressController, EgressPolicy
+from firewall.mcp.schema import validate_arguments
 from firewall.mcp.registry import MCPServerRegistry
 from firewall.mcp.types import (
     M_INITIALIZE, M_PROMPTS_GET, M_PROMPTS_LIST, M_RESOURCES_LIST,
@@ -62,14 +65,24 @@ class MCPDataFlowTracker:
     arguments, which is the classic confused-deputy / exfiltration channel.
     """
 
-    def __init__(self, min_len: int = 24, window: int = 500):
+    def __init__(self, min_len: int = 24, window: int = 500, max_sessions: int = 4096):
+        self.max_sessions = max_sessions
         self.min_len = min_len
         self.by_session: dict[str, deque[_FlowFragment]] = defaultdict(
             lambda: deque(maxlen=window)
         )
 
+    @staticmethod
+    def scope(actor: Actor) -> str:
+        return json.dumps([actor.tenant, actor.user_id, actor.session_id])
+
+    def clear_session(self, actor: Actor) -> None:
+        self.by_session.pop(self.scope(actor), None)
+
     def observe_result(self, session_id: str, server_id: str,
                        method: str, content: Any) -> None:
+        if session_id not in self.by_session and len(self.by_session) >= self.max_sessions:
+            raise ValueError("MCP data-flow session budget exceeded")
         for chunk in _iter_string_chunks(content, self.min_len):
             self.by_session[session_id].append(_FlowFragment(
                 server_id=server_id,
@@ -88,6 +101,8 @@ class MCPDataFlowTracker:
         # the common case where an attacker's payload is URL-encoded, wrapped,
         # concatenated, or otherwise embedded rather than exactly re-emitted.
         arg_blob = " ".join(_iter_all_strings(args))
+        for _ in range(2):
+            arg_blob = urllib.parse.unquote(arg_blob)
         hits: list[_FlowFragment] = []
         seen_hashes = set()
         for frag in seen:
@@ -176,10 +191,8 @@ class MCPInspector:
 
         srv = self.registry.get(msg.server_id)
         if srv is None:
-            # An unknown server is still allowed to be observed, but every
-            # message from it is treated as untrusted and non-privileged.
-            srv = MCPServerDef(server_id=msg.server_id, name=msg.server_id,
-                                allowed_capabilities=[], allow_sampling=False)
+            return self._deny("MCP server is not registered", "critical",
+                              "supply_chain", "unknown_mcp_server")
 
         if msg.direction == MCPDirection.INBOUND:
             return self._inspect_inbound(msg, srv, actor)
@@ -197,6 +210,13 @@ class MCPInspector:
                     severity="critical", category="excessive_agency",
                     subcategory="mcp_sampling_denied",
                 )
+            params = msg.params or {}
+            tokens = params.get("maxTokens")
+            messages = params.get("messages")
+            if type(tokens) is not int or not 0 < tokens <= srv.max_sampling_tokens \
+                    or not isinstance(messages, list) or not 0 < len(messages) <= srv.max_sampling_messages:
+                return self._deny("Sampling exceeds configured token/message limits", "critical",
+                                  "unbounded_consumption", "mcp_sampling_budget_denied")
             # Sampling params include a messages array — treat everything as untrusted
             text = _extract_all_text(msg.params or {})
             ev = self._input_event(actor, text, srv, method=msg.method)
@@ -207,24 +227,36 @@ class MCPInspector:
         if msg.is_response():
             # Prefer method-specific handlers by re-deriving intent from result shape
             r = msg.result
+            # Inspect the whole response before dispatching by shape. Otherwise
+            # an innocuous tools/resources field could hide a malicious sibling.
+            generic = self._input_event(actor, _extract_all_text(
+                msg.error if msg.error is not None else r), srv)
+            self._run_input_detectors(generic)
+            for detector in (self.dlp, self.out):
+                for detection in detector.scan(generic):
+                    generic.add_detection(detection)
+            verdict = self._decide(generic)
             if isinstance(r, dict) and "tools" in r:
-                return self._inspect_tools_list(msg, srv, actor, r)
+                return self._merge(self._inspect_tools_list(msg, srv, actor, r), verdict)
             if isinstance(r, dict) and "prompts" in r:
-                return self._inspect_prompts_list(msg, srv, actor, r)
+                return self._merge(self._inspect_prompts_list(msg, srv, actor, r), verdict)
             if isinstance(r, dict) and "resources" in r:
-                return self._inspect_resources_list(msg, srv, actor, r)
+                return self._merge(self._inspect_resources_list(msg, srv, actor, r), verdict)
             if isinstance(r, dict) and "contents" in r:
-                return self._inspect_resources_read(msg, srv, actor, r)
+                return self._merge(self._inspect_resources_read(msg, srv, actor, r), verdict)
             if isinstance(r, dict) and ("content" in r or "isError" in r):
-                return self._inspect_tool_call_result(msg, srv, actor, r)
-            # generic response — DLP + output_sec on the JSON-stringified body
-            ev = self._output_event(actor, _stringify(r), srv)
-            for d in self.dlp.scan(ev):  ev.add_detection(d)
-            for d in self.out.scan(ev):  ev.add_detection(d)
-            return self._decide(ev)
+                return self._merge(self._inspect_tool_call_result(msg, srv, actor, r), verdict)
+            return verdict
 
-        # notifications / progress / logging
-        return InspectionResult(decision=Decision.ALLOW)
+        # Server-initiated requests require explicit capability authorization.
+        if msg.is_request():
+            return self._deny("Server-initiated request is not authorized", "critical",
+                              "excessive_agency", "mcp_server_request_denied")
+        ev = self._input_event(actor, _extract_all_text(msg.params or {}), srv, msg.method)
+        self._run_input_detectors(ev)
+        for d in self.dlp.scan(ev):
+            ev.add_detection(d)
+        return self._decide(ev)
 
     def _inspect_tools_list(self, msg, srv, actor, result):
         tools = result.get("tools", []) or []
@@ -241,7 +273,7 @@ class MCPInspector:
             elif status == "unpinned":
                 detections.append(Detection(
                     detector="mcp.registry", category="supply_chain",
-                    subcategory="tool_unpinned", severity="high", confidence=0.9,
+                    subcategory="tool_unpinned", severity="critical", confidence=1.0,
                     message=f"[{srv.server_id}] {reason}",
                     metadata={"server_id": srv.server_id, "tool": t.get("name")},
                 ))
@@ -272,10 +304,10 @@ class MCPInspector:
             name = p.get("name", "")
             desc = p.get("description", "") + " " + str(p.get("arguments", ""))
             status, reason = self.registry.check_prompt_drift(srv.server_id, name, desc)
-            if status == "drifted":
+            if status in ("drifted", "unpinned", "unknown_server"):
                 detections.append(Detection(
                     detector="mcp.registry", category="supply_chain",
-                    subcategory="prompt_drift", severity="high", confidence=1.0,
+                    subcategory="prompt_drift" if status == "drifted" else "prompt_unpinned", severity="high", confidence=1.0,
                     message=f"[{srv.server_id}] {reason}",
                     metadata={"server_id": srv.server_id, "prompt": name},
                 ))
@@ -293,33 +325,29 @@ class MCPInspector:
 
     def _inspect_resources_read(self, msg, srv, actor, result):
         contents = result.get("contents", []) or []
-        text = "\n\n".join(str(c.get("text", "")) for c in contents if isinstance(c, dict))
+        text = _extract_all_text(result)
         ev = self._input_event(actor, text, srv, method=msg.method)
         self._run_input_detectors(ev)
         for d in self.dlp.scan(ev):
             ev.add_detection(d)
         # Track flow for later confused-deputy check
         self.data_flow.observe_result(
-            actor.session_id or actor.user_id, srv.server_id, msg.method, text,
+            self.data_flow.scope(actor), srv.server_id, msg.method, text,
         )
         return self._decide(ev)
 
     def _inspect_tool_call_result(self, msg, srv, actor, result):
         # Tool result — content is untrusted, may carry secondary injection / secrets / exploit output
-        content_pieces = result.get("content", []) or []
-        text = ""
-        for piece in content_pieces:
-            if isinstance(piece, dict):
-                text += "\n" + str(piece.get("text", ""))
-            else:
-                text += "\n" + str(piece)
+        text = _extract_all_text(result)
         ev = self._output_event(actor, text, srv)
+        ev.input_text = text
+        ev.trust_of_input = TrustLevel.UNTRUSTED
         # Model output detectors AND input detectors run — the result IS input to the LLM
         for d in self.pi.scan(ev):  ev.add_detection(d)
         for d in self.dlp.scan(ev): ev.add_detection(d)
         for d in self.out.scan(ev): ev.add_detection(d)
         self.data_flow.observe_result(
-            actor.session_id or actor.user_id, srv.server_id, msg.method or "tools/call", text,
+            self.data_flow.scope(actor), srv.server_id, msg.method or "tools/call", text,
         )
         return self._decide(ev)
 
@@ -327,7 +355,19 @@ class MCPInspector:
 
     def _inspect_outbound(self, msg: MCPMessage, srv: MCPServerDef,
                            actor: Actor) -> InspectionResult:
-        # initialize — client is about to open a session. Nothing risky per se.
+        methods = {M_INITIALIZE, M_TOOLS_CALL, M_TOOLS_LIST, M_PROMPTS_LIST,
+                   M_PROMPTS_GET, M_RESOURCES_LIST, M_RESOURCES_READ, M_RESOURCES_SUBSCRIBE,
+                   "resources/unsubscribe", "completion/complete", "logging/setLevel", "ping",
+                   "notifications/initialized", "notifications/cancelled", "notifications/progress"}
+        if msg.method and msg.method not in methods:
+            return self._deny("MCP method is not authorized", "critical",
+                              "excessive_agency", "mcp_method_denied")
+        capability = msg.method.split("/", 1)[0]
+        if srv.allowed_capabilities and capability in {"tools", "resources", "prompts"} \
+                and capability not in srv.allowed_capabilities:
+            return self._deny("MCP capability is not granted to this server", "critical",
+                              "excessive_agency", "mcp_capability_denied")
+        # initialize opens a session under the configured trust registry.
         if msg.method == M_INITIALIZE:
             return InspectionResult(decision=Decision.ALLOW)
 
@@ -353,11 +393,20 @@ class MCPInspector:
         name = params.get("name", "")
         args = params.get("arguments", {}) or {}
         pinned = srv.tools.get(name)
+        if pinned is None:
+            return self._deny("Tool is not pinned in the trusted registry", "critical",
+                              "supply_chain", "tool_unpinned")
+        if pinned.input_schema is None:
+            return self._deny("Pinned tool schema missing; repin the reviewed tool", "critical",
+                              "tool_security", "mcp_schema_missing")
+        valid, why = validate_arguments(pinned.input_schema, args)
+        if not valid:
+            return self._deny(why, "critical", "tool_security", "mcp_invalid_arguments")
         td = ToolDefinition(
             name=name,
             description="",
             risk_level=(pinned.risk_level if pinned else "medium"),
-            allowed_hosts=(pinned.allowed_hosts if pinned else srv.allowed_hosts),
+            allowed_hosts=(pinned.allowed_hosts or srv.allowed_hosts),
             allowed_resources=(pinned.allowed_resources if pinned else []),
             requires_human_approval=(pinned.requires_human_approval if pinned else False),
             provider=srv.server_id,
@@ -374,7 +423,7 @@ class MCPInspector:
         for d in self.out.scan(ev): ev.add_detection(d)
 
         # Cross-server confused-deputy check
-        leaks = self.data_flow.check_leak(actor.session_id or actor.user_id,
+        leaks = self.data_flow.check_leak(self.data_flow.scope(actor),
                                            srv.server_id, args)
         for frag in leaks[:5]:
             ev.add_detection(Detection(
@@ -389,32 +438,43 @@ class MCPInspector:
             ))
 
         # Egress check: URLs in args must sit inside server-declared allowed_hosts
-        if td.allowed_hosts:
-            for u in _URL_RE.findall(_stringify(args)):
-                host = urllib.parse.urlparse(u).hostname or ""
-                if not any(fnmatch.fnmatch(host, pat) for pat in td.allowed_hosts):
-                    ev.add_detection(Detection(
-                        detector="mcp.egress", category="network_security",
-                        subcategory="mcp_egress_denied",
-                        severity="high", confidence=0.95,
-                        message=f"URL {u} in MCP tool arg not in server allowed_hosts.",
-                        metadata={"host": host, "allowed": td.allowed_hosts},
-                    ))
+        for u in _URL_RE.findall(_stringify(args)):
+            ok, why = EgressController(EgressPolicy(allowed_hosts=td.allowed_hosts)).check(u)
+            if not ok:
+                ev.add_detection(Detection(
+                    detector="mcp.egress", category="network_security",
+                    subcategory="mcp_egress_denied", severity="critical", confidence=1.0,
+                    message=f"MCP tool URL denied: {why}",
+                    metadata={"allowed": td.allowed_hosts},
+                ))
 
-        return self._decide(ev)
+        result = self._decide(ev)
+        if pinned.requires_human_approval and result.decision.severity < Decision.REQUIRE_APPROVAL.severity:
+            result.decision = Decision.REQUIRE_APPROVAL
+            ev.decision = result.decision
+            result.reasons.append("Pinned tool requires human approval")
+        return result
 
     def _check_uri_against_srv(self, uri: str, srv: MCPServerDef, actor: Actor):
-        if not srv.allowed_hosts:
-            return InspectionResult(decision=Decision.ALLOW)
-        parsed = urllib.parse.urlparse(uri)
-        host = parsed.hostname or ""
-        if parsed.scheme in ("http", "https") and host \
-                and not any(fnmatch.fnmatch(host, pat) for pat in srv.allowed_hosts):
-            return self._deny(
-                f"MCP resource {uri} not in server allowed_hosts.",
-                severity="high", category="network_security",
-                subcategory="mcp_resource_egress_denied",
-            )
+        if not isinstance(uri, str) or not uri:
+            return self._deny("Resource URI must be a nonempty string", "critical",
+                              "network_security", "mcp_invalid_resource_uri")
+        try:
+            parsed = urllib.parse.urlparse(uri)
+        except ValueError:
+            return self._deny("Resource URI is malformed", "critical",
+                              "network_security", "mcp_invalid_resource_uri")
+        if parsed.scheme in ("http", "https"):
+            ok, why = EgressController(EgressPolicy(allowed_hosts=srv.allowed_hosts)).check(uri)
+            if not ok:
+                return self._deny(f"MCP resource denied: {why}", "critical",
+                                  "network_security", "mcp_resource_egress_denied")
+        elif parsed.scheme in ("file", "data", "javascript", "ftp") or not parsed.scheme:
+            return self._deny("Resource URI scheme is not allowed", "critical",
+                              "network_security", "mcp_resource_scheme_denied")
+        elif not any(fnmatch.fnmatchcase(uri, pattern) for pattern in srv.allowed_resource_uris):
+            return self._deny("Custom resource URI is not allowlisted", "critical",
+                              "network_security", "mcp_resource_scope_denied")
         return InspectionResult(decision=Decision.ALLOW)
 
     # ------------------- helpers -------------------
@@ -458,6 +518,16 @@ class MCPInspector:
                     for d in ev.detections[:6]]
         return InspectionResult(decision=dec, detections=list(ev.detections),
                                  reasons=reasons, event=ev)
+
+    def _merge(self, structural, content):
+        decision = max((structural.decision, content.decision), key=lambda d: d.severity)
+        detections = structural.detections + content.detections
+        event = content.event
+        if event is not None:
+            event.detections = detections
+            event.decision = decision
+        return InspectionResult(decision=decision, detections=detections,
+                                reasons=structural.reasons + content.reasons, event=event)
 
     def _package(self, detections: list[Detection],
                   category_hint: str = "") -> InspectionResult:

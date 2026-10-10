@@ -66,6 +66,8 @@ class MCPServerRegistry:
             return "drifted", f"tool '{name}' description changed since pinning", pinned
         if current.schema_hash != pinned.schema_hash:
             return "drifted", f"tool '{name}' input schema changed since pinning", pinned
+        if pinned.definition_hash and current.definition_hash != pinned.definition_hash:
+            return "drifted", f"tool '{name}' annotations or metadata changed since pinning", pinned
         return "trusted", "", pinned
 
     def check_prompt_drift(self, server_id: str, name: str, content: str
@@ -91,7 +93,8 @@ class MCPServerRegistry:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MCPServerRegistry":
         reg = cls()
-        for sid, sd in data.get("servers", {}).items():
+        for sid, original in data.get("servers", {}).items():
+            sd = dict(original)
             tools = {k: MCPToolFingerprint(**v) for k, v in sd.pop("tools", {}).items()}
             reg.servers[sid] = MCPServerDef(**sd, tools=tools)
         for sid in data.get("blocked", []):

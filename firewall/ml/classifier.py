@@ -118,8 +118,6 @@ def train_feature_classifier(
 
     Label: 1 if category != "benign", else 0.
     """
-    from dataset.schema import loads
-
     weights: dict[str, float] = {k: 0.0 for k in FEATURE_NAMES}
     n = 0
     for epoch in range(epochs):
@@ -129,11 +127,16 @@ def train_feature_classifier(
                 if not line:
                     continue
                 try:
-                    ex = loads(line)
-                except Exception:
+                    ex = json.loads(line)
+                    if not isinstance(ex, dict) or not isinstance(ex.get("category"), str):
+                        continue
+                    text = ex.get("attack_text") or ex.get("user_message") or ex.get("output_text") or ""
+                    if not isinstance(text, str):
+                        continue
+                except (json.JSONDecodeError, ValueError):
                     continue
-                y = 0.0 if ex.category == "benign" else 1.0
-                text = (ex.attack_text or ex.user_message or ex.output_text or "")[:5000]
+                y = 0.0 if ex["category"] == "benign" else 1.0
+                text = text[:5000]
                 f_vec = extract_features(text)
                 z = sum(weights.get(k, 0.0) * v for k, v in f_vec.items())
                 p = 1.0 / (1.0 + math.exp(-max(-30, min(30, z))))
@@ -167,15 +170,17 @@ class TransformerClassifier:
         except ImportError as e:
             raise RuntimeError("pip install transformers torch to use TransformerClassifier") from e
         self.pipe = pipeline("text-classification", model=model, device=device,
-                              truncation=True)
+                              truncation=False)
         self.threshold = threshold
 
     def predict(self, text: str) -> tuple[bool, float]:
-        out = self.pipe(text[:4000])[0]
+        out = self.pipe(text, truncation=False)[0]
         label = str(out.get("label", "")).lower()
         score = float(out.get("score", 0.0))
         # ProtectAI-style: "INJECTION" positive, "SAFE" negative
         malicious = label.startswith(("injection", "malicious", "unsafe", "attack", "label_1"))
+        if not malicious and not label.startswith(("safe", "benign", "label_0")):
+            raise ValueError("Unsupported classifier label")
         prob = score if malicious else 1.0 - score
         return (prob >= self.threshold, prob)
 
@@ -203,20 +208,49 @@ class MLDetector:
         return None
 
     def scan(self, event: SecurityEvent) -> list[Detection]:
+        from firewall.util.security_rules import candidate_texts
         out: list[Detection] = []
-        for lbl, text in (("input", event.input_text), ("output", event.output_text)):
-            if not text:
-                continue
-            malicious, prob = self.clf.predict(text)
-            sev = self._severity(prob) if malicious else None
-            if not sev:
-                continue
+        seen = set()
+        inspected_chars = 0
+        windows = 0
+        try:
+            for location, text in candidate_texts(event, "all"):
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                inspected_chars += len(text)
+                if inspected_chars > 50_000:
+                    raise ValueError("Semantic inspection budget exceeded")
+                # Inspect the tail too; do not silently truncate an attack past a prefix.
+                for start in range(0, len(text), 2700):
+                    windows += 1
+                    if windows > 32:
+                        raise ValueError("Semantic inspection budget exceeded")
+                    window = text[start:start + 3000]
+                    source_location = location
+                    if location == "input" and event.source is not None:
+                        source_location += ":" + event.source.kind.value
+                    scoped_predict = getattr(self.clf, "predict_for_carrier", None)
+                    malicious, prob = scoped_predict(window, source_location) if scoped_predict else self.clf.predict(window)
+                    if type(malicious) is not bool or not math.isfinite(prob) or not 0 <= prob <= 1:
+                        raise ValueError("Invalid classifier result")
+                    sev = self._severity(prob) if malicious else None
+                    if malicious and not sev:
+                        sev = "high"
+                    if not sev:
+                        continue
+                    out.append(Detection(
+                        detector=self.NAME, category=self.category, subcategory="ml_flagged",
+                        severity=sev, confidence=prob,
+                        message="Injection classifier flagged content",
+                        metadata={"location": location, "score": round(prob, 4),
+                                  "model_version": getattr(self.clf, "version", "?")},
+                    ))
+                    break
+        except Exception:
             out.append(Detection(
-                detector=self.NAME, category=self.category,
-                subcategory="ml_flagged",
-                severity=sev, confidence=prob,
-                message=f"ML backstop flagged {lbl} (p={prob:.3f})",
-                metadata={"location": lbl, "prob": round(prob, 4),
-                           "model_version": getattr(self.clf, "version", "?")},
+                detector=self.NAME, category=self.category, subcategory="semantic_inspection_failed",
+                severity="critical", confidence=1.0,
+                message="Semantic inspection failed or exceeded its bounds; request withheld",
             ))
         return out

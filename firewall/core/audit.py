@@ -1,6 +1,7 @@
 """Structured audit log — JSONL, SIEM-friendly, one event per line."""
 from __future__ import annotations
 
+from collections import deque
 import dataclasses
 import enum
 import json
@@ -26,7 +27,11 @@ def _default(o: Any) -> Any:
 
 
 class AuditLog:
-    def __init__(self, path: str | Path | None = None, echo: bool = False):
+    def __init__(self, path: str | Path | None = None, echo: bool = False,
+                 max_records: int = 1000, include_sensitive_details: bool = False):
+        if max_records < 0:
+            raise ValueError("max_records must be nonnegative")
+        self.include_sensitive_details = include_sensitive_details
         self.path = Path(path) if path else None
         self.echo = echo
         self._lock = threading.Lock()
@@ -34,7 +39,7 @@ class AuditLog:
         if self.path:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._file = open(self.path, "a", encoding="utf-8")
-        self.records: list[dict[str, Any]] = []
+        self.records = deque(maxlen=max_records)
 
     def close(self) -> None:
         if self._file:
@@ -69,6 +74,24 @@ class AuditLog:
             "approval_required_from": event.approval_required_from,
             "tags": event.tags,
         }
+        if not self.include_sensitive_details:
+            # Keep identifiers and rule outcomes; omit arbitrary content that
+            # can include credentials and attacker-controlled log injection.
+            record["actor"]["metadata"] = {}
+            if record["tool_call"]:
+                record["tool_call"]["arguments"] = {"redacted": True}
+            if record["tool_def"]:
+                record["tool_def"]["description"] = "[omitted]"
+                record["tool_def"]["metadata"] = {}
+            record["source_origin"] = "[omitted]" if event.source else None
+            record["destination"] = "[omitted]"
+            record["reasons"] = ["decision details omitted"] if event.reasons else []
+            record["risk_reasons"] = []
+            for detection in record["detections"]:
+                detection["evidence"] = ""
+                detection["message"] = "[omitted]"
+                detection["metadata"] = {key: value for key, value in detection["metadata"].items()
+                                          if key in {"rule_id", "location", "decoded", "asi", "kind"}}
         line = json.dumps(record, default=_default, ensure_ascii=False)
         with self._lock:
             self.records.append(record)

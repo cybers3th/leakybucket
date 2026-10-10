@@ -12,7 +12,10 @@ entrypoint; `ToolFirewall` handles the low-level enforcement + execution.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import inspect
+import json
 import time
 import traceback
 from typing import Any, Callable
@@ -26,6 +29,7 @@ from firewall.core.events import (
 from firewall.core.policy import PolicyEngine
 from firewall.core.risk import RiskEngine
 from firewall.core.trust import TrustResolver
+from firewall.detectors.prompt_injection import PromptInjectionDetector
 from firewall.detectors.output_security import OutputSecurityDetector
 from firewall.detectors.sensitive_data import SensitiveDataDetector
 from firewall.detectors.supply_chain import SupplyChainDetector
@@ -59,6 +63,8 @@ class ToolFirewall:
         egress: EgressController | None = None,
         rate_limiter: RateLimiter | None = None,
         approval_callback: Callable[[SecurityEvent], bool] | None = None,
+        output_constraints=None,
+        injection_detector=None,
     ):
         self.policy = policy_engine
         self.risk = risk_engine
@@ -70,9 +76,12 @@ class ToolFirewall:
         self.egress = egress
         self.rate = rate_limiter or RateLimiter()
         self.approval_callback = approval_callback
+        self.output_constraints = output_constraints
+        self.injection_detector = injection_detector
         self._tool_sec = ToolSecurityDetector()
         self._data = SensitiveDataDetector()
         self._output = OutputSecurityDetector()
+        self._injection = PromptInjectionDetector()
 
     # ---- registration ----
     def register(self, td: ToolDefinition, fn: Callable[..., Any]) -> None:
@@ -82,13 +91,18 @@ class ToolFirewall:
     def call(self, event: SecurityEvent) -> ToolResult:
         assert event.tool_call is not None, "ToolFirewall.call requires event.tool_call"
         tc = event.tool_call
+        if not isinstance(tc.tool, str) or not tc.tool.strip():
+            event.decision = Decision.BLOCK
+            event.reasons.append("Invalid tool name")
+            self.audit.write(event)
+            raise ToolBlocked(event.reasons)
         td, fn = self._resolve(tc.tool)
         event.tool_def = td
         event.destination = f"tool:{tc.tool}"
         event.stage = "tool_pre"
 
         # Rate limit per session:tool
-        key = f"{event.actor.session_id or 'anon'}:{tc.tool}"
+        key = json.dumps([event.actor.tenant, event.actor.user_id, event.actor.session_id, tc.tool])
         ok, why = self.rate.allow(
             key,
             rate_per_minute=(td.rate_limit_per_minute if td else None),
@@ -109,10 +123,28 @@ class ToolFirewall:
             for d in self.supply_chain.scan(event):
                 event.add_detection(d)
 
+        for d in self._injection.scan(event):
+            event.add_detection(d)
+        if self.injection_detector is not None:
+            event.detections.extend(self.injection_detector.scan(event))
+        if td and fn is not None:
+            try:
+                inspect.signature(fn).bind(**tc.arguments)
+            except (TypeError, ValueError):
+                from firewall.core.events import Detection
+                event.add_detection(Detection(
+                    detector="tool_firewall", category="tool_security",
+                    subcategory="argument_binding_failed", severity="critical", confidence=1.0,
+                    message="Arguments do not match the registered callable",
+                ))
+
         # Egress check for URL arguments if the tool is network-capable
-        if td and self.egress and "network" in (td.capabilities or []):
+        if td and "network" in (td.capabilities or []):
             for u in _extract_urls(tc.arguments):
-                ok_url, why_url = self.egress.check(u)
+                per_tool = EgressController(EgressPolicy(allowed_hosts=td.allowed_hosts))
+                ok_url, why_url = per_tool.check(u)
+                if ok_url and self.egress is not None:
+                    ok_url, why_url = self.egress.check(u)
                 if not ok_url:
                     event.add_detection(_make_egress_detection(u, why_url))
 
@@ -146,16 +178,19 @@ class ToolFirewall:
             approved = False
             if self.approval_callback:
                 try:
-                    approved = bool(self.approval_callback(event))
+                    approved = self.approval_callback(event) is True
                 except Exception as e:
                     event.reasons.append(f"approval_callback error: {e}")
             if not approved:
                 # Track a denied-approval count for behavior engine
-                sid = event.actor.session_id or event.correlation_id
+                sid = self.behavior.session_key(event)
                 self.behavior._s(sid).approvals_denied += 1
                 raise ApprovalRequired(event.reasons)
 
-        # Execute (either SANITIZE or ALLOW past this point)
+        if event.decision == Decision.SANITIZE:
+            raise ToolBlocked(["Tool arguments require sanitization; execution withheld"])
+
+        # Execute only after enforcement.
         start = time.time()
         try:
             content = fn(**(tc.arguments or {}))
@@ -188,17 +223,46 @@ class ToolFirewall:
         )
         for d in self._data.scan(post_event):
             post_event.add_detection(d)
+        for d in self._injection.scan(post_event):
+            post_event.add_detection(d)
+        if self.injection_detector is not None:
+            post_event.detections.extend(self.injection_detector.scan(post_event))
         for d in self._output.scan(post_event):
             post_event.add_detection(d)
+        constraints = self.output_constraints
+        if constraints is not None and (constraints.forbidden_literals or constraints.forbidden_markers or
+                                        constraints.forbidden_action_prefixes):
+            try:
+                if isinstance(result.content, str):
+                    text = result.content
+                    if len(text) > 1_000_000:
+                        raise ValueError("Result too large")
+                else:
+                    chunks = []
+                    size = 0
+                    for chunk in json.JSONEncoder(ensure_ascii=False, allow_nan=False).iterencode(result.content):
+                        size += len(chunk)
+                        if size > 1_000_000:
+                            raise ValueError("Result too large")
+                        chunks.append(chunk)
+                    text = ''.join(chunks)
+                constraint_event = SecurityEvent(actor=event.actor, output_text=text)
+                post_event.detections.extend(replace(constraints, schema=None).scan(constraint_event))
+            except (ValueError, TypeError):
+                from firewall.core.events import Detection
+                post_event.add_detection(Detection(detector="tool_firewall", category="tool_security",
+                    subcategory="result_inspection_failed", severity="critical", confidence=1.0,
+                    message="Tool result cannot be inspected within configured bounds"))
         self.risk.score(post_event)
         self.policy.evaluate(post_event)
-        # If the result itself is malicious (e.g. contains injection or shell payload),
-        # sanitize/redact before returning
-        if post_event.decision in (Decision.SANITIZE, Decision.REQUIRE_APPROVAL, Decision.BLOCK):
-            if isinstance(result.content, str):
-                result.content = self._data.redact(result.content)
-            post_event.sanitized_text = str(result.content)[:2000]
         self.audit.write(post_event)
+        if post_event.decision == Decision.BLOCK:
+            raise ToolBlocked(post_event.reasons)
+        if post_event.decision == Decision.REQUIRE_APPROVAL:
+            # Approval for a call does not approve an unexpected tool result.
+            raise ApprovalRequired(post_event.reasons)
+        if post_event.decision == Decision.SANITIZE:
+            raise ToolBlocked(["Tool result requires sanitization; delivery withheld"])
 
         return result
 
@@ -217,7 +281,7 @@ def _make_egress_detection(url: str, why: str):
     return Detection(
         detector="egress", category="network_security",
         subcategory="egress_denied",
-        severity="high", confidence=1.0,
+        severity="critical", confidence=1.0,
         message=f"Egress denied for {url}: {why}",
         metadata={"url": url},
     )

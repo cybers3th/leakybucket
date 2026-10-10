@@ -25,6 +25,8 @@ CATEGORY_WEIGHT: dict[str, float] = {
     "unbounded_consumption": 0.8,
     "tool_security":         1.1,
     "network_security":      1.1,
+    "ai_specific":           1.1,
+    "infra_exposure":        1.2,
 }
 
 

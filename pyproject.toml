@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leakybucket-firewall"
+version = "0.2.0"
+description = "Defense-in-depth security inspection for AI agents and MCP"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["jsonschema>=4.22,<5"]
+
+[project.optional-dependencies]
+serve = ["aiohttp>=3.13,<4"]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+leakybucket = "firewall.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["firewall*"]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

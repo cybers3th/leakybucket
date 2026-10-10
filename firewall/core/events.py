@@ -153,6 +153,7 @@ class ToolDefinition:
     version: str = "1.0"
     sha256: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    input_schema: dict[str, Any] | None = None
 
 
 @dataclass

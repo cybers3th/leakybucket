@@ -1,0 +1,7 @@
+include README.md CHANGELOG.md pyproject.toml
+recursive-include docs *.md
+prune dataset
+prune eval
+prune tests
+prune examples
+global-exclude __pycache__ *.py[cod] *.gguf *.safetensors *.pt *.pth *.onnx *.log *.jsonl

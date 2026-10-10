@@ -1,11 +1,11 @@
 """Output-shape / schema validation.
 
-Deliberately dependency-free — supports a subset of JSON Schema sufficient
-for structured LLM output enforcement: type, properties, required, enum,
-minLength, maxLength, minimum, maximum, pattern, items, additionalProperties.
+Uses the same offline JSON Schema validation as approved MCP/tool arguments.
+Application constraints are trusted configuration and fail closed.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import re
 from typing import Any
@@ -17,55 +17,9 @@ class SchemaError(ValueError):
 
 def validate_json_schema(instance: Any, schema: dict, path: str = "$") -> list[str]:
     """Return a list of error messages. Empty list = valid."""
-    errors: list[str] = []
-    if "$ref" in schema:
-        return errors  # refs not supported in this minimal impl
-    t = schema.get("type")
-    if t:
-        if not _type_matches(instance, t):
-            errors.append(f"{path}: expected type {t}, got {type(instance).__name__}")
-            return errors
-    if "enum" in schema and instance not in schema["enum"]:
-        errors.append(f"{path}: value {instance!r} not in enum {schema['enum']}")
-    if isinstance(instance, str):
-        if "minLength" in schema and len(instance) < schema["minLength"]:
-            errors.append(f"{path}: string shorter than minLength {schema['minLength']}")
-        if "maxLength" in schema and len(instance) > schema["maxLength"]:
-            errors.append(f"{path}: string longer than maxLength {schema['maxLength']}")
-        if "pattern" in schema and re.search(schema["pattern"], instance) is None:
-            errors.append(f"{path}: string does not match pattern {schema['pattern']}")
-    if isinstance(instance, (int, float)) and not isinstance(instance, bool):
-        if "minimum" in schema and instance < schema["minimum"]:
-            errors.append(f"{path}: {instance} < minimum {schema['minimum']}")
-        if "maximum" in schema and instance > schema["maximum"]:
-            errors.append(f"{path}: {instance} > maximum {schema['maximum']}")
-    if isinstance(instance, list) and "items" in schema:
-        for i, item in enumerate(instance):
-            errors += validate_json_schema(item, schema["items"], f"{path}[{i}]")
-    if isinstance(instance, dict):
-        required = schema.get("required", [])
-        for k in required:
-            if k not in instance:
-                errors.append(f"{path}: missing required '{k}'")
-        props = schema.get("properties", {})
-        for k, v in instance.items():
-            if k in props:
-                errors += validate_json_schema(v, props[k], f"{path}.{k}")
-            elif schema.get("additionalProperties") is False:
-                errors.append(f"{path}: additional property '{k}' not allowed")
-    return errors
-
-
-def _type_matches(instance: Any, t: str) -> bool:
-    return {
-        "string":  isinstance(instance, str),
-        "integer": isinstance(instance, int) and not isinstance(instance, bool),
-        "number":  isinstance(instance, (int, float)) and not isinstance(instance, bool),
-        "boolean": isinstance(instance, bool),
-        "array":   isinstance(instance, list),
-        "object":  isinstance(instance, dict),
-        "null":    instance is None,
-    }.get(t, False)
+    from firewall.mcp.schema import validate_arguments
+    valid, reason = validate_arguments(schema, instance)
+    return [] if valid else [f"{path}: {reason}"]
 
 
 def try_parse_json(text: str) -> tuple[Any, str | None]:
@@ -73,3 +27,86 @@ def try_parse_json(text: str) -> tuple[Any, str | None]:
         return json.loads(text), None
     except Exception as e:
         return None, str(e)
+
+
+@dataclass(frozen=True)
+class OutputConstraints:
+    """Trusted application configuration; never populate from model/event data.
+
+    Marker matching ignores punctuation/case. Literal matching includes bounded
+    decoded representations and ignores whitespace to cover split disclosures.
+    These checks enforce explicit strings, not general factual correctness.
+    """
+    forbidden_literals: tuple[str, ...] = ()
+    forbidden_markers: tuple[str, ...] = ()
+    forbidden_action_prefixes: tuple[str, ...] = ()
+    schema: dict | None = None
+
+    def __post_init__(self):
+        for values in (self.forbidden_literals, self.forbidden_markers, self.forbidden_action_prefixes):
+            if any(not isinstance(value, str) or not value.strip() for value in values):
+                raise ValueError("output constraints must contain nonempty strings")
+        if any(not _marker(value) for value in self.forbidden_markers):
+            raise ValueError("markers must contain letters or numbers")
+
+    def scan(self, event):
+        from firewall.core.events import Detection
+        from firewall.util.normalize import normalize_basic
+        from firewall.util.security_rules import inspection_views
+        if not (self.forbidden_literals or self.forbidden_markers or self.forbidden_action_prefixes or self.schema is not None):
+            return []
+        text = event.output_text or ""
+        failures = set()
+        for view in inspection_views(text):
+            compact = re.sub(r"\s+", "", view)
+            if any(re.sub(r"\s+", "", normalize_basic(value)) in compact
+                   for value in self.forbidden_literals):
+                failures.add("forbidden_literal")
+            if any(_marker(value) in _marker(view) for value in self.forbidden_markers):
+                failures.add("forbidden_marker")
+            if any(normalize_basic(value).casefold() in view.casefold()
+                   for value in self.forbidden_action_prefixes):
+                failures.add("forbidden_action")
+        if self.schema is not None:
+            from firewall.mcp.schema import validate_arguments
+            try:
+                valid, _ = validate_arguments(self.schema, json.loads(text))
+            except (ValueError, TypeError):
+                valid = False
+            if not valid:
+                failures.add("output_schema_violation")
+        return [Detection(detector="application_output", category="output_security",
+                          subcategory=code, severity="critical", confidence=1.0,
+                          message="Configured application output constraint violated")
+                for code in sorted(failures)]
+
+
+def _marker(text):
+    import unicodedata
+    return ''.join(c for c in unicodedata.normalize('NFKC', text).casefold() if c.isalnum())
+
+
+class CredentialAdviceValidator:
+    """Opt-in rejection of clear affirmative advice to publish private credentials.
+
+    Narrow textual check; not a factual verifier or a general security-advice judge.
+    Configure an independent domain validator for broader correctness requirements.
+    """
+    _affirmative = re.compile(
+        r"\b(?:(?:private|secret|sensitive)\s+)?(?:credentials?|passwords?|api\s+keys?|private\s+keys?)"
+        r"\s+(?:should|must|can|need\s+to)\s+(?:be\s+)?"
+        r"(?:publish(?:ed)?|post(?:ed)?\s+publicly|shar(?:e|ed)\s+publicly|made\s+public)\b", re.I)
+    _imperative = re.compile(
+        r"^\s*(?:(?:yes|you\s+should|you\s+must)[,:]?\s+)?"
+        r"(?:publish|post\s+publicly|share\s+publicly)\s+(?:your|the|all)?\s*"
+        r"(?:private\s+|secret\s+)?(?:credentials?|passwords?|api\s+keys?|private\s+keys?)\b", re.I)
+
+    def __call__(self, event) -> bool:
+        for sentence in re.split(r"(?<=[.!?])\s+|\n", event.output_text or ""):
+            if self._imperative.search(sentence):
+                return False
+            match = self._affirmative.search(sentence)
+            if match and not re.search(r"\b(?:incorrect|unsafe|bad\s+advice|do\s+not|never)\b",
+                                      sentence[:match.start()], re.I):
+                return False
+        return True

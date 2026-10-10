@@ -6,6 +6,7 @@ raising a `attack_chain` detection when a suspicious combination fires.
 """
 from __future__ import annotations
 
+import json
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -92,6 +93,7 @@ class SessionState:
     risk_accum: int = 0
     warnings: int = 0
     approvals_denied: int = 0
+    accounted_events: Deque[str] = field(default_factory=lambda: deque(maxlen=200))
 
     def action_slugs(self) -> list[str]:
         return [a[1] for a in self.actions]
@@ -122,16 +124,26 @@ class BehaviorEngine:
             s.session_id = sid
         return s
 
+    @staticmethod
+    def session_key(event: SecurityEvent) -> str:
+        return json.dumps([event.actor.tenant, event.actor.user_id,
+                           event.actor.session_id or event.correlation_id])
+
+    def release_session(self, event: SecurityEvent) -> None:
+        self.sessions.pop(self.session_key(event), None)
+
     def observe(self, event: SecurityEvent, action: str, detail: str = "") -> None:
-        sid = event.actor.session_id or event.correlation_id
+        sid = self.session_key(event)
         s = self._s(sid)
         s.actions.append((time.time(), action, detail))
         if action == ACT_TOOL_CALL:
             s.tool_calls += 1
-        if event.input_text:
-            s.tokens_in += _approx_tokens(event.input_text)
-        if event.output_text:
-            s.tokens_out += _approx_tokens(event.output_text)
+        if event.event_id not in s.accounted_events:
+            s.accounted_events.append(event.event_id)
+            if event.input_text:
+                s.tokens_in += _approx_tokens(event.input_text)
+            if event.output_text:
+                s.tokens_out += _approx_tokens(event.output_text)
         s.risk_accum += event.risk_score
 
     def infer_actions(self, event: SecurityEvent) -> list[str]:
@@ -167,7 +179,7 @@ class BehaviorEngine:
 
     def match_chains(self, event: SecurityEvent) -> list[Detection]:
         """Return chain detections triggered by the current session state."""
-        sid = event.actor.session_id or event.correlation_id
+        sid = self.session_key(event)
         s = self._s(sid)
         slugs = s.action_slugs()
         out: list[Detection] = []
@@ -186,7 +198,7 @@ class BehaviorEngine:
         return out
 
     def check_limits(self, event: SecurityEvent) -> list[Detection]:
-        sid = event.actor.session_id or event.correlation_id
+        sid = self.session_key(event)
         s = self._s(sid)
         out: list[Detection] = []
         if s.tool_calls > self.limits["max_tool_calls"]:

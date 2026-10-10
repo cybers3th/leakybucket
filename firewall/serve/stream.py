@@ -60,7 +60,16 @@ class StreamingInspector:
         max_output_chars: int = 200_000,
         # optional caller callback fired when a detection lands
         on_detection: Callable[[Detection], None] | None = None,
+        buffer_until_verified: bool = True,
     ):
+        if min(window_chars, scan_stride_chars, max_output_chars) <= 0 or overlap_chars < 0:
+            raise ValueError("stream limits must be positive")
+        constraints = gateway.output_constraints
+        if not buffer_until_verified and (constraints.schema is not None or
+                constraints.forbidden_literals or constraints.forbidden_markers or
+                constraints.forbidden_action_prefixes or gateway.output_validators):
+            raise ValueError("Application output constraints require buffered verification")
+        self.buffer_until_verified = buffer_until_verified
         self.gateway = gateway
         self.actor = actor
         self.model = model
@@ -82,6 +91,7 @@ class StreamingInspector:
         """
         st = _WindowState()
         last_scan_at = 0
+        pending = []
         async for chunk in chunks:
             if not chunk:
                 continue
@@ -110,7 +120,10 @@ class StreamingInspector:
                                    f"{critical.category}/{critical.subcategory} {critical.message}")
 
             # Chunk is safe to pass through (nothing critical up to here)
-            yield chunk
+            if self.buffer_until_verified:
+                pending.append(chunk)
+            else:
+                yield chunk
 
         # Final pass on tail
         st.finalized = True
@@ -119,8 +132,20 @@ class StreamingInspector:
             raise HardCut(self._make_event(st, crit.subcategory or "critical"),
                            f"{crit.category}/{crit.subcategory} {crit.message}")
 
+        if self.buffer_until_verified:
+            # The complete response is inspected before any content is released.
+            # This also covers payloads longer than a rolling window.
+            complete = _WindowState(buf="".join(pending), total_chars=st.total_chars)
+            complete.detections = st.detections
+            critical = self._scan(complete, complete=True)
+            if critical is not None:
+                raise HardCut(self._make_event(complete, critical.subcategory),
+                              f"{critical.category}/{critical.subcategory}")
+            for chunk in pending:
+                yield chunk
+
     # ----- internals -----
-    def _scan(self, st: _WindowState) -> Detection | None:
+    def _scan(self, st: _WindowState, complete: bool = False) -> Detection | None:
         ev = SecurityEvent(
             actor=self.actor,
             source=Source(kind=SourceKind.MODEL_OUTPUT, origin=self.model),
@@ -139,6 +164,8 @@ class StreamingInspector:
         for d in self.gateway.infra.scan(ev): ev.add_detection(d)
         for d in self.gateway.agentic.scan(ev): ev.add_detection(d)
 
+        self.gateway._validate_output(ev, complete=complete)
+
         # Deduplicate against what we've already seen this stream
         seen_keys = {(d.subcategory, d.evidence[:60]) for d in st.detections}
         for d in ev.detections:
@@ -150,6 +177,11 @@ class StreamingInspector:
             if self.on_detection:
                 try: self.on_detection(d)
                 except Exception: pass
+
+        self.gateway._score_and_decide(ev)
+        # No approval/sanitization can be applied to an already-emitted stream.
+        if ev.decision != Decision.ALLOW and ev.detections:
+            return max(ev.detections, key=lambda d: d.severity_int)
 
         # Trigger hard cut on critical
         for d in ev.detections:

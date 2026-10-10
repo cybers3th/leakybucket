@@ -11,12 +11,14 @@ that fires alongside patterns + policy. Two implementations:
 
 Both expose the same MLDetector interface used by the Gateway.
 """
+from firewall.ml.semantic import LocalSemanticClassifier
+
 from firewall.ml.classifier import (
     FeatureClassifier, MLDetector, TransformerClassifier,
     train_feature_classifier,
 )
 
 __all__ = [
-    "FeatureClassifier", "TransformerClassifier", "MLDetector",
+    "FeatureClassifier", "TransformerClassifier", "MLDetector", "LocalSemanticClassifier",
     "train_feature_classifier",
 ]
