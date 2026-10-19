@@ -1,17 +1,5 @@
-"""Signed, chain-hashed audit log.
-
-Every audit record is:
-  * canonically serialized
-  * hashed with the previous record's hash (blockchain-style chain)
-  * signed with HMAC-SHA256 using a rotating key
-Tampering with any record breaks the chain from that point forward.
-
-Provides optional SIEM sinks:
-  * Splunk HEC
-  * Elasticsearch bulk endpoint
-  * Datadog logs API
-  * generic Syslog RFC 5424 over UDP
-"""
+"""Chain-hashed audit records authenticated with HMAC-SHA256.
+Includes optional SIEM sinks and chain verification."""
 from __future__ import annotations
 
 import dataclasses

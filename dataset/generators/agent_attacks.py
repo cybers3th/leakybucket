@@ -49,7 +49,6 @@ TOOL_POISONING = [
 
 def generate(seed: int = 46) -> Iterable[Example]:
     n = 0
-    # 1) Direct unauthorized tool invocations
     for tool, sev, args, cat in UNAUTHORIZED_TOOLS:
         n += 1
         yield Example(
@@ -70,7 +69,6 @@ def generate(seed: int = 46) -> Iterable[Example]:
             generator="agent_attacks.unauthorized_tool",
         )
 
-    # 2) Tool poisoning — malicious tool description
     for td in TOOL_POISONING:
         n += 1
         yield Example(
@@ -92,7 +90,6 @@ def generate(seed: int = 46) -> Iterable[Example]:
             generator="agent_attacks.tool_poisoning",
         )
 
-    # 3) Attack chains — multi-step scenarios
     chains = [
         (
             "exfil_via_web_after_rag_injection",
@@ -139,7 +136,6 @@ def generate(seed: int = 46) -> Iterable[Example]:
             generator="agent_attacks.chain",
         )
 
-    # 4) Loop / unbounded consumption — repeated identical tool call
     n += 1
     hist_loop = []
     for _ in range(15):
@@ -163,7 +159,6 @@ def generate(seed: int = 46) -> Iterable[Example]:
         generator="agent_attacks.loop",
     )
 
-    # 5) Cross-agent injection — one agent sends a malicious message to another
     n += 1
     yield Example(
         id=f"agent_a2a_{n:06d}",

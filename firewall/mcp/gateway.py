@@ -75,7 +75,6 @@ class MCPGateway:
         self.inspector = MCPInspector(self.registry, data_flow=self.data_flow)
         self.rate = rate_limiter or RateLimiter()
 
-    # ---- primary API ----
 
     def inspect_inbound(self, server_id: str, actor: Actor,
                          message: dict) -> InspectionResult:
@@ -107,7 +106,6 @@ class MCPGateway:
                 return r
         return self._run(msg, actor)
 
-    # ---- helpers ----
 
     def _validate(self, server_id, actor, message, direction):
         """Bound work before recursive detectors; reject malformed envelopes."""
@@ -287,7 +285,6 @@ class MCPGateway:
             if not approved:
                 raise MCPApprovalRequired(result.reasons)
 
-    # ---- convenience: full round-trip ----
 
     def gate_outbound(self, server_id: str, actor: Actor, message: dict) -> InspectionResult:
         r = self.inspect_outbound(server_id, actor, message)

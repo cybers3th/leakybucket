@@ -19,8 +19,6 @@ from dataset.primitives import (
 from dataset.schema import ConversationTurn, Example, ExpectedBehavior
 
 
-# ---------- Obfuscation transforms ----------
-
 HOMO_TABLE = str.maketrans({"a": "а", "e": "е", "o": "о", "p": "р", "c": "с",
                               "y": "у", "x": "х", "i": "і"})
 
@@ -55,8 +53,6 @@ def _translate_prefix(text: str, lang: str) -> str:
                .replace("Ignore all previous instructions", ph["ignore_prev"].rstrip(" and")) \
                .replace(" and ", f" {ph['and']} ")
 
-
-# ---------- Generation ----------
 
 def _fill_template(tech: Technique, action_text: str, rng: random.Random) -> str:
     tpl = tech.template
@@ -93,7 +89,6 @@ def generate(seed: int = 60) -> Iterable[Example]:
         n[0] += 1
         return f"{prefix}_{n[0]:07d}"
 
-    # 1) Single-turn: every technique × every action × every obfuscation × subset of languages
     single = techniques_by_category("single_turn") \
               + techniques_by_category("automated") \
               + techniques_by_category("reasoning")
@@ -126,7 +121,6 @@ def generate(seed: int = 60) -> Iterable[Example]:
             seed=str(seed),
         )
 
-    # 2) Indirect: every carrier × every indirect-or-single-turn technique × subset of actions
     indirect_techs = techniques_by_category("indirect") \
                      + techniques_by_category("single_turn")[:6]
     action_subset = MALICIOUS_ACTIONS[:12]
@@ -168,7 +162,6 @@ def generate(seed: int = 60) -> Iterable[Example]:
             seed=str(seed),
         )
 
-    # 3) Multi-turn: every multi-turn technique × subset of actions × two priming styles
     multi = techniques_by_category("multi_turn")
     for tech, (a_slug, a_text, a_sev) in itertools.product(multi, MALICIOUS_ACTIONS[:8]):
         for priming_style in ("benign_workflow", "trust_ladder"):
@@ -213,7 +206,6 @@ def generate(seed: int = 60) -> Iterable[Example]:
                 seed=str(seed),
             )
 
-    # 4) Obfuscation family standalone — every obfuscation technique × subset actions
     for tech, (a_slug, a_text, a_sev) in itertools.product(
             techniques_by_category("obfuscation"), MALICIOUS_ACTIONS[:15]):
         text = _fill_template(tech, a_text, rng)
@@ -237,8 +229,7 @@ def generate(seed: int = 60) -> Iterable[Example]:
             seed=str(seed),
         )
 
-    # 5) Multimodal (shape-only — encoded as descriptive text since the firewall
-    #    handles text; agentic wrappers may consume image OCR results as text)
+    # Multimodal cases use text descriptions rather than image or audio artifacts.
     for tech, (a_slug, a_text, a_sev) in itertools.product(
             techniques_by_category("multimodal"), MALICIOUS_ACTIONS[:10]):
         text = _fill_template(tech, a_text, rng)

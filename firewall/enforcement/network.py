@@ -69,10 +69,8 @@ class EgressController:
             return False, "ambiguous URL characters"
         if not host:
             return False, "no host"
-        # Explicit host blocklist
         if host in BLOCKED_HOSTNAMES or host.endswith(".localhost"):
             return False, f"host '{host}' blocked"
-        # IP-literal checks
         ip_obj = _maybe_ip(host)
         if ip_obj is not None and self.policy.block_private_addresses:
             if getattr(ip_obj, "ipv4_mapped", None) is not None:
@@ -82,10 +80,8 @@ class EgressController:
             for net in BLOCKED_IPS:
                 if ip_obj in net:
                     return False, f"IP '{host}' in blocked range {net}"
-        # Port check
         if port not in self.policy.allowed_ports:
             return False, f"port {port} not allowed"
-        # Host allowlist
         if not self.policy.allowed_hosts:
             return False, "no hosts allowlisted"
         if not any(fnmatch.fnmatch(host, pat) for pat in self.policy.allowed_hosts):

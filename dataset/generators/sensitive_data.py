@@ -77,7 +77,6 @@ PII_BUILDERS = [
 def _luhn_cc(r: random.Random) -> str:
     while True:
         base = [r.randint(4, 5)] + [r.randint(0, 9) for _ in range(14)]
-        # compute Luhn check
         total = 0
         for i, d in enumerate(reversed(base)):
             if i % 2 == 0:

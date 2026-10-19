@@ -21,7 +21,6 @@ class MCPServerRegistry:
         self.servers: dict[str, MCPServerDef] = {}
         self.blocked_servers: set[str] = set()
 
-    # ---- registration ----
     def register(self, server: MCPServerDef) -> None:
         self.servers[server.server_id] = server
 
@@ -34,7 +33,6 @@ class MCPServerRegistry:
     def get(self, server_id: str) -> MCPServerDef | None:
         return self.servers.get(server_id)
 
-    # ---- pinning ----
     def pin_tool(self, server_id: str, tool: dict[str, Any], **kwargs) -> MCPToolFingerprint:
         fp = MCPToolFingerprint.compute(tool, **kwargs)
         srv = self.servers.setdefault(server_id, MCPServerDef(server_id=server_id, name=server_id))
@@ -47,7 +45,6 @@ class MCPServerRegistry:
         srv.prompts[name] = h
         return h
 
-    # ---- drift detection ----
     def check_tool_drift(self, server_id: str, tool: dict[str, Any]
                          ) -> tuple[str, str, MCPToolFingerprint | None]:
         """Return (status, reason, pinned_fp).
@@ -83,7 +80,6 @@ class MCPServerRegistry:
             return "drifted", f"prompt '{name}' content changed since pinning"
         return "trusted", ""
 
-    # ---- persistence ----
     def to_dict(self) -> dict[str, Any]:
         return {
             "servers": {sid: asdict(s) for sid, s in self.servers.items()},

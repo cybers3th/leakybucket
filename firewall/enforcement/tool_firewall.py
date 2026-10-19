@@ -1,15 +1,5 @@
-"""Tool firewall.
-
-Sits in front of every tool/function invocation. Runs the full pipeline
-around the call:
-
-    identify actor → validate args → detect injection/secrets → determine target
-    → risk score → policy → allow/block/approval → execute → inspect result
-    → update behavior → audit.
-
-The gateway can call `Gateway.request_tool(...)` for the higher-level
-entrypoint; `ToolFirewall` handles the low-level enforcement + execution.
-"""
+"""Authorize and inspect tool calls before execution, then inspect their results.
+Gateway.request_tool provides the higher-level entry point."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -83,11 +73,9 @@ class ToolFirewall:
         self._output = OutputSecurityDetector()
         self._injection = PromptInjectionDetector()
 
-    # ---- registration ----
     def register(self, td: ToolDefinition, fn: Callable[..., Any]) -> None:
         self.registry[td.name] = (td, fn)
 
-    # ---- main entrypoint ----
     def call(self, event: SecurityEvent) -> ToolResult:
         assert event.tool_call is not None, "ToolFirewall.call requires event.tool_call"
         tc = event.tool_call
@@ -114,7 +102,6 @@ class ToolFirewall:
             self.audit.write(event)
             raise ToolBlocked(event.reasons)
 
-        # Detectors on the pre-call event
         for d in self._tool_sec.scan(event):
             event.add_detection(d)
         for d in self._data.scan(event):
@@ -148,18 +135,15 @@ class ToolFirewall:
                 if not ok_url:
                     event.add_detection(_make_egress_detection(u, why_url))
 
-        # Behavior: record intent
         self.behavior.observe(event, ACT_TOOL_CALL, tc.tool)
         for d in self.behavior.check_limits(event):
             event.add_detection(d)
         for d in self.behavior.match_chains(event):
             event.add_detection(d)
 
-        # Trust of input
         if event.source:
             event.trust_of_input = self.trust.resolve(event.source)
 
-        # Score + policy
         self.risk.score(event)
         self.policy.evaluate(event)
 
@@ -210,7 +194,6 @@ class ToolFirewall:
         )
         event.tool_result = result
 
-        # Post-execution inspection
         event.stage = "tool_post"
         post_event = SecurityEvent(
             correlation_id=event.correlation_id,
@@ -266,7 +249,6 @@ class ToolFirewall:
 
         return result
 
-    # ---- internals ----
     def _resolve(self, name: str) -> tuple[ToolDefinition | None, Callable[..., Any] | None]:
         entry = self.registry.get(name)
         if not entry:

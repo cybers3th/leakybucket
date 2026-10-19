@@ -123,8 +123,6 @@ class MCPMessage:
         return not self.method and self.id is not None
 
 
-# ---- helpers for canonical MCP method names ----
-
 M_INITIALIZE          = "initialize"
 M_TOOLS_LIST          = "tools/list"
 M_TOOLS_CALL          = "tools/call"

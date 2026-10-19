@@ -1,10 +1,4 @@
-"""Production-shape serving layer:
-  * async gateway wrapping the sync core
-  * streaming SSE inspection with hard-cut mid-response
-  * OpenAI-compatible proxy (works with any upstream speaking the same shape)
-  * signed, chain-hashed audit log with SIEM sinks
-  * distributed state layer (in-memory + Redis backends)
-"""
+"""HTTP serving, streaming inspection, audit signing, and shared state."""
 from firewall.serve.async_gateway import AsyncGateway
 from firewall.serve.stream    import StreamingInspector, HardCut
 from firewall.serve.signed_audit import SignedAuditLog

@@ -124,7 +124,6 @@ def build(mutation_multiplier: int = 2, verbose: bool = True) -> dict:
     if verbose:
         print(f"[build] total examples after mutation: {len(all_out)}")
 
-    # --- Write files ---
     (ROOT / "all.jsonl").write_text("")
     with open(ROOT / "all.jsonl", "w") as f:
         for ex in all_out:
@@ -143,7 +142,6 @@ def build(mutation_multiplier: int = 2, verbose: bool = True) -> dict:
             for ex in exs:
                 f.write(dumps(ex) + "\n")
 
-    # --- Stats ---
     stats = {
         "total": len(all_out),
         "by_category": {k: len(v) for k, v in per_cat.items()},

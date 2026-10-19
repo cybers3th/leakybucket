@@ -38,9 +38,7 @@ from dataset import schema
 from dataset.schema import Example, ExpectedBehavior, loads
 
 
-# ---------------------------------------------------------------------------
 # Bridging: Example -> SecurityEvent
-# ---------------------------------------------------------------------------
 
 def _source_from(dict_or_none) -> Source | None:
     if not dict_or_none:
@@ -161,9 +159,7 @@ def example_to_event(ex: Example) -> tuple[SecurityEvent, str]:
     return event, stage
 
 
-# ---------------------------------------------------------------------------
 # Bridging: firewall decision -> comparable label
-# ---------------------------------------------------------------------------
 
 _EXPECTED_TO_DECISION = {
     ExpectedBehavior.ALLOW:    Decision.ALLOW,
@@ -194,9 +190,7 @@ def _classify(expected: ExpectedBehavior, actual: Decision) -> str:
         return "tp_weaker"
 
 
-# ---------------------------------------------------------------------------
 # Main runner
-# ---------------------------------------------------------------------------
 
 def load(split: str | None = None, categories: set[str] | None = None,
          sample: int | None = None) -> Iterable[Example]:
@@ -354,7 +348,6 @@ def run(split: str | None = None, categories: set[str] | None = None,
     print(f"\nProcessed {total} examples in {total_time:.1f}s "
           f"({total/max(total_time,1e-6):.0f}/s, avg {sum(latencies)/max(len(latencies),1):.2f}ms)\n")
 
-    # ---- Compute metrics ----
     def prf(c: Counter) -> tuple[float, float, float]:
         tp = c["tp_exact"] + c["tp_stricter"] + c["tp_weaker"]
         fp = c["fp"]
@@ -381,7 +374,6 @@ def run(split: str | None = None, categories: set[str] | None = None,
         if sev in by_sev:
             print(f"  {sev:<10} {_fmt(by_sev[sev])}")
     print("-" * 88)
-    # Overall
     overall = Counter()
     for c in by_cat.values():
         overall.update(c)
@@ -400,7 +392,6 @@ def run(split: str | None = None, categories: set[str] | None = None,
         for f_ in fps[:20]:
             print(f"  {f_['id']}  -> {f_['decision']} ({'; '.join(f_['reasons'])[:120]})  ::  {f_['attack_text'][:100]}")
 
-    # Machine-readable
     report = {
         "total": total,
         "elapsed_s": total_time,

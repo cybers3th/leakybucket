@@ -1,12 +1,5 @@
-"""Deterministic, auditable policy engine.
-
-Policies are expressed as simple JSON-serializable rules. Each rule has
-a match block and an action. Matching is deterministic; the first rule
-that fires whose action is more severe than the current decision wins
-(later rules can only escalate, never downgrade). This makes policy
-evaluation predictable and auditable — the final decision always has a
-concrete list of matched rules and reasons.
-"""
+"""Evaluate JSON-serializable policy rules. Matching rules can escalate a decision,
+but cannot downgrade it."""
 from __future__ import annotations
 
 import fnmatch
@@ -19,10 +12,6 @@ from typing import Any, Callable
 
 from firewall.core.events import DataClassification, Decision, SecurityEvent, TrustLevel
 
-
-# ---------------------------------------------------------------------------
-# Rule matching primitives
-# ---------------------------------------------------------------------------
 
 _OPS: dict[str, Callable[[Any, Any], bool]] = {
     "eq":       operator.eq,
@@ -62,7 +51,6 @@ def _match_condition(event: SecurityEvent, cond: dict[str, Any]) -> bool:
     op = cond.get("op", "eq")
     value = cond.get("value")
     if field_path is None:
-        # composite
         if "any_of" in cond:
             return any(_match_condition(event, c) for c in cond["any_of"])
         if "all_of" in cond:
@@ -153,10 +141,6 @@ class PolicyEngine:
         event.decision = best
         return best
 
-
-# ---------------------------------------------------------------------------
-# Default baseline policy — sensible defense-in-depth defaults
-# ---------------------------------------------------------------------------
 
 def default_baseline_policy() -> Policy:
     return Policy(

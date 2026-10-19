@@ -28,7 +28,6 @@ def generate(seed: int = 45) -> Iterable[Example]:
     rng = random.Random(seed)
     n = 0
 
-    # 1) Poisoned retrieved documents (same tenant, malicious content)
     for tpl in POISONED_TEMPLATES:
         for _ in range(5):
             n += 1
@@ -54,7 +53,6 @@ def generate(seed: int = 45) -> Iterable[Example]:
                 generator="rag_attacks.poisoned",
             )
 
-    # 2) Cross-tenant retrieval — the vector store returned a doc from another tenant
     for (content, tenant, classification), user_tenant in itertools.product(
             CROSS_TENANT_DOCS, ["default", "widgets_inc"]):
         n += 1
@@ -82,7 +80,6 @@ def generate(seed: int = 45) -> Iterable[Example]:
             tags=[f"user_tenant:{user_tenant}", f"doc_tenant:{tenant}"],
         )
 
-    # 3) Metadata manipulation
     for suspicious in ["system_prompt", "instructions", "override"]:
         n += 1
         doc = {"doc_id": f"mm{n}",
@@ -109,7 +106,6 @@ def generate(seed: int = 45) -> Iterable[Example]:
             generator="rag_attacks.metadata",
         )
 
-    # 4) Excessive retrieval
     n += 1
     many_docs = [{"doc_id": f"e{i}", "content": f"snippet {i}",
                   "source": {"kind": "rag_document", "origin": "src", "tenant": "default"}}

@@ -23,10 +23,8 @@ from firewall.core.policy import Policy
 from firewall.enforcement.network import EgressPolicy
 
 
-# ---------------------------------------------------------------------------
 # Compliance mapping — every detector subcategory tagged with control IDs
 # so the audit stream + report can be filtered by framework.
-# ---------------------------------------------------------------------------
 
 @dataclass
 class ComplianceMap:
@@ -104,9 +102,7 @@ def compliance_controls_for(categories: Iterable[str]) -> dict[str, list[str]]:
     return {k: sorted(v) for k, v in acc.items()}
 
 
-# ---------------------------------------------------------------------------
 # Per-tenant configuration
-# ---------------------------------------------------------------------------
 
 @dataclass
 class TenantConfig:
@@ -146,9 +142,7 @@ class TenantRegistry:
         return reg
 
 
-# ---------------------------------------------------------------------------
 # Per-tenant behavioral baseline (learned over time)
-# ---------------------------------------------------------------------------
 
 @dataclass
 class TenantBehaviorBaseline:

@@ -1,16 +1,5 @@
-"""ML backstop layer — small trained classifier as an ensemble member.
-
-The classifier is NOT the security boundary. It's an additional detector
-that fires alongside patterns + policy. Two implementations:
-
-  * FeatureClassifier: dependency-free logistic-regression over engineered
-    features; ships and runs with no torch/HF requirement. Trained offline
-    from the corpus by ``train.py`` and loaded from a JSON model file.
-  * TransformerClassifier: HF Transformers pipeline over DeBERTa / ModernBERT
-    / Prompt-Guard checkpoints. Optional; needs torch + transformers.
-
-Both expose the same MLDetector interface used by the Gateway.
-"""
+"""Optional feature-based and transformer classifiers for the detector pipeline.
+Classifier predictions do not replace authorization or policy enforcement."""
 from firewall.ml.semantic import LocalSemanticClassifier
 
 from firewall.ml.classifier import (

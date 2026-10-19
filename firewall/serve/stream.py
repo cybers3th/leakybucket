@@ -1,16 +1,6 @@
-"""Streaming SSE inspection with hard-cut mid-response.
-
-The upstream LLM returns Server-Sent Events (Chat Completions-style
-streaming). We ingest each chunk as it arrives, maintain a rolling window
-of decoded output, run the OUTPUT-side detectors on the window as it
-grows, and terminate the stream the moment any critical detection fires.
-The client sees a clean stream, then a `data: {"error": ...}` terminator.
-
-Detectors run on windows, not per token, because a secret or SQLi pattern
-must be seen as a contiguous span; token boundaries in streamed responses
-split payloads across chunks (this is exactly what makes streaming attacks
-work — the naive approach of scanning per-chunk misses everything).
-"""
+"""Inspect buffered responses or rolling output windows.
+Buffered mode withholds output until inspection completes; rolling mode
+cannot retract content already delivered."""
 from __future__ import annotations
 
 import asyncio
@@ -144,7 +134,6 @@ class StreamingInspector:
             for chunk in pending:
                 yield chunk
 
-    # ----- internals -----
     def _scan(self, st: _WindowState, complete: bool = False) -> Detection | None:
         ev = SecurityEvent(
             actor=self.actor,

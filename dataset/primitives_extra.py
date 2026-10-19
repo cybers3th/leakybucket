@@ -19,9 +19,7 @@ import random
 import urllib.parse
 
 
-# ---------------------------------------------------------------------------
 # Malicious actions — mapped to concrete impacts
-# ---------------------------------------------------------------------------
 
 ACTIONS_EXTRA: list[tuple[str, str, str]] = [
     # (slug, text, severity)
@@ -131,9 +129,7 @@ ACTIONS_EXTRA: list[tuple[str, str, str]] = [
 ]
 
 
-# ---------------------------------------------------------------------------
 # Carriers (indirect delivery vectors) — 60+
-# ---------------------------------------------------------------------------
 
 CARRIERS_EXTRA: list[tuple[str, str, str]] = [
     # (slug, template with {payload}, source_kind)
@@ -205,9 +201,7 @@ CARRIERS_EXTRA: list[tuple[str, str, str]] = [
 ]
 
 
-# ---------------------------------------------------------------------------
 # Obfuscation transforms — 30
-# ---------------------------------------------------------------------------
 
 _HOMO = str.maketrans({"a": "а", "e": "е", "o": "о", "p": "р", "c": "с",
                          "y": "у", "x": "х", "i": "і", "l": "ⅼ", "s": "ѕ"})
@@ -271,9 +265,7 @@ OBFUSCATIONS_EXTRA = [
 ]
 
 
-# ---------------------------------------------------------------------------
 # Language phrasebook (30 languages)
-# ---------------------------------------------------------------------------
 
 LANG_EXTRA: dict[str, dict[str, str]] = {
     # already in primitives.py: en, es, fr, de, pt, it, nl, ru, zh, ja, ko, ar, he, hi, tr, vi, sw, zu
@@ -292,9 +284,7 @@ LANG_EXTRA: dict[str, dict[str, str]] = {
 }
 
 
-# ---------------------------------------------------------------------------
 # Framing wrappers — 40 published/known jailbreak framings applied to any action
-# ---------------------------------------------------------------------------
 
 FRAMINGS: list[tuple[str, str]] = [
     ("plain",          "{a}"),

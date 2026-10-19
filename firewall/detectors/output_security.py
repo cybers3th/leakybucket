@@ -27,7 +27,6 @@ def _p(slug, severity, confidence, regex, message):
                     re.compile(regex, re.IGNORECASE | re.DOTALL), message)
 
 
-# ---- SQL injection patterns ----
 SQLI = [
     _p("sqli_union", "high", 0.85, r"\b(union\s+(all\s+)?select)\b", "UNION-based SQLi"),
     _p("sqli_or_tautology", "high", 0.9,
@@ -39,7 +38,6 @@ SQLI = [
     _p("sqli_load_file", "critical", 0.9, r"\b(load_file|into\s+outfile|xp_cmdshell)\b", "SQL file/RCE primitive"),
 ]
 
-# ---- Shell command injection ----
 SHELL = [
     _p("shell_metachar_chain", "high", 0.85,
        r"(?:^|[\s\"'])(?:[;&|`]|\$\(|>\(|\|\||&&)\s*(?:rm|cat|wget|curl|nc|ncat|bash|sh|zsh|/bin/|/usr/bin/)", "Command chaining"),
@@ -54,7 +52,6 @@ SHELL = [
     _p("shell_eval_python", "critical", 0.9, r"\beval\s*\(|\bexec\s*\(", "eval/exec call"),
 ]
 
-# ---- XSS ----
 XSS = [
     _p("xss_script_tag", "high", 0.9, r"<\s*script[^>]*>[\s\S]*?<\s*/\s*script\s*>", "Script tag"),
     _p("xss_script_src", "high", 0.9, r"<\s*script[^>]*\bsrc\s*=", "External script"),
@@ -67,7 +64,6 @@ XSS = [
     _p("xss_img_onerror", "high", 0.85, r"<\s*img[^>]*\bonerror\s*=", "img onerror"),
 ]
 
-# ---- SSRF ----
 SSRF = [
     _p("ssrf_metadata", "critical", 0.95,
        r"https?://(?:169\.254\.169\.254|metadata\.google\.internal|metadata\.azure\.com|100\.100\.100\.200)",
@@ -81,7 +77,6 @@ SSRF = [
     _p("ssrf_dict", "high", 0.85, r"\bdict://[^\s]+", "dict:// URL"),
 ]
 
-# ---- Path traversal ----
 PATH = [
     _p("path_traversal_dotdot", "high", 0.85, r"(?:\.\./|\.\.\\){2,}", "Repeated ../ traversal"),
     _p("path_etc_passwd", "critical", 0.95, r"/etc/(?:passwd|shadow|sudoers|hosts)\b", "Sensitive path"),
@@ -92,7 +87,6 @@ PATH = [
     _p("path_kube_config", "high", 0.9, r"(?:~|\$HOME|/root|/home/[^/]+)/\.kube/config", "kube config"),
 ]
 
-# ---- Template injection ----
 SSTI = [
     _p("ssti_jinja",  "high", 0.85, r"\{\{[^}]{0,4}(?:config|request|self|__|globals|import|os|subprocess)[^}]*\}\}", "Jinja SSTI"),
     _p("ssti_ftl",    "high", 0.8, r"<#assign\b|<#assign\s|<#include\s|<#\s*eval", "Freemarker SSTI"),
@@ -100,7 +94,6 @@ SSTI = [
     _p("ssti_dollar_curly", "medium", 0.65, r"\$\{\s*(?:jndi|runtime|process|env|exec|system):", "JNDI/EL SSTI (log4shell shape)"),
 ]
 
-# ---- XXE / XML ----
 XXE = [
     _p("xxe_doctype_entity", "high", 0.9,
        r"<!DOCTYPE\s+[^>]+\[\s*<!ENTITY\s+\w+\s+SYSTEM\s+\"file://[^\"]+\"", "XXE with SYSTEM file"),
@@ -108,7 +101,6 @@ XXE = [
        r"<!ENTITY\s+\w+\s+SYSTEM\s+\"[^\"]+\"", "External ENTITY"),
 ]
 
-# ---- Suspicious URLs ----
 URL_DANGER = [
     _p("url_ip_literal", "medium", 0.7, r"https?://\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?/", "IP-literal URL"),
     _p("url_shortener", "medium", 0.7,
@@ -116,7 +108,6 @@ URL_DANGER = [
     _p("url_data_binary", "medium", 0.7, r"data:(?:application|audio|video|image)/[^;]+;base64,", "data: binary URL"),
 ]
 
-# ---- Insecure code generation ----
 INSECURE_CODE = [
     _p("insecure_pickle", "high", 0.85, r"\bpickle\.(?:loads?|Unpickler)\s*\(", "Insecure pickle load"),
     _p("insecure_yaml", "high", 0.85, r"\byaml\.load\s*\((?!.*Loader\s*=\s*yaml\.Safe)", "yaml.load without SafeLoader"),
@@ -126,7 +117,6 @@ INSECURE_CODE = [
 ]
 
 
-# ---- Blind SSRF / OOB callback infrastructure ----
 BLIND_SSRF = [
     _p("blind_ssrf_burp",     "high", 0.9, r"\b[a-z0-9]{20,}\.(?:oastify\.com|burpcollaborator\.net)\b", "Burp Collaborator OOB host"),
     _p("blind_ssrf_interactsh","high", 0.9, r"\b[a-z0-9]{20,}\.(?:interactsh\.com|oast\.(?:live|pro|fun|me|site|online|space|us))\b", "interactsh OOB host"),
@@ -137,27 +127,23 @@ BLIND_SSRF = [
     _p("blind_ssrf_dns_rebind","high", 0.85, r"\bhttps?://[a-z0-9\-]+\.(?:nip\.io|xip\.io|sslip\.io)", "DNS-rebind service"),
 ]
 
-# ---- HTTP smuggling / request desynchronization ----
 HTTP_SMUGGLING = [
     _p("smuggling_te_cl",  "critical", 0.85, r"(?i)Transfer-Encoding\s*:\s*chunked[\s\S]{0,80}Content-Length\s*:", "TE.CL smuggling shape"),
     _p("smuggling_cl_te",  "critical", 0.85, r"(?i)Content-Length\s*:[\s\S]{0,80}Transfer-Encoding\s*:\s*chunked", "CL.TE smuggling shape"),
     _p("smuggling_double_te","high",  0.85, r"(?i)Transfer-Encoding\s*:\s*chunked[\s\S]{0,80}Transfer-Encoding\s*:", "double Transfer-Encoding"),
 ]
 
-# ---- CORS misconfiguration ----
 CORS = [
     _p("cors_wildcard_creds","high", 0.9, r"(?i)Access-Control-Allow-Origin\s*:\s*\*[\s\S]{0,200}Access-Control-Allow-Credentials\s*:\s*true", "ACAO:* + credentials"),
     _p("cors_reflect_origin","medium", 0.7, r"(?i)Access-Control-Allow-Origin\s*:\s*\$\{?request\.origin", "Reflected Origin"),
     _p("cors_null_origin","high", 0.85, r"(?i)Access-Control-Allow-Origin\s*:\s*null\b", "ACAO: null"),
 ]
 
-# ---- Open redirects ----
 OPEN_REDIRECT = [
     _p("open_redirect_param","medium", 0.75, r"[?&](?:next|url|redirect|redirect_uri|redirect_to|return|returnTo|dest|destination|target|continue|forward|goto)=(?:https?%3[Aa]%2[Ff]%2[Ff]|https?://)[^\s&#]+", "unvalidated redirect param"),
     _p("open_redirect_meta","medium", 0.75, r"<meta[^>]+http-equiv=[\"']refresh[\"'][^>]+url=(?:https?://|//)", "meta-refresh redirect"),
 ]
 
-# ---- Cache poisoning headers ----
 CACHE_POISON = [
     _p("cache_x_forwarded_host","high", 0.8, r"(?im)^X-Forwarded-Host\s*:\s*(?:attacker|evil)\.", "X-Forwarded-Host attacker"),
     _p("cache_x_original_url","high", 0.8, r"(?im)^X-Original-URL\s*:\s*/", "X-Original-URL override"),
@@ -165,14 +151,12 @@ CACHE_POISON = [
     _p("cache_x_forwarded_scheme","medium", 0.7, r"(?im)^X-Forwarded-Scheme\s*:\s*http\b", "downgrade scheme header"),
 ]
 
-# ---- Prototype pollution ----
 PROTO_POLLUTION = [
     _p("proto_dunder_proto","high", 0.9, r"\b(?:__proto__|constructor\.prototype)\b\s*[=\[:]", "__proto__ / constructor.prototype write"),
     _p("proto_object_prototype","high", 0.85, r"\bObject\.prototype\.[a-zA-Z_][\w]*\s*=", "Object.prototype write"),
     _p("proto_setprototypeof","medium", 0.7, r"\bObject\.setPrototypeOf\s*\(", "Object.setPrototypeOf call"),
 ]
 
-# ---- Auth bypass shapes ----
 AUTH_BYPASS = [
     _p("auth_jwt_none",       "critical", 0.95, r"\"alg\"\s*:\s*\"(?:none|None|NONE)\"", "JWT alg:none"),
     _p("auth_admin_true",     "high", 0.8, r"[\"']?(?:isAdmin|is_admin|admin|role|isSuperuser|is_superuser)[\"']?\s*[:=]\s*(?:true|1|['\"]admin['\"]|['\"]root['\"])", "elevated-role field set to true"),
@@ -181,14 +165,12 @@ AUTH_BYPASS = [
     _p("auth_debug_endpoint", "high", 0.8, r"(?i)/(?:debug|_debug|actuator|actuator/env|actuator/heapdump|actuator/httptrace|api/debug|health/debug)\b", "management/debug endpoint"),
 ]
 
-# ---- IDOR / broken authorization ----
 IDOR = [
     _p("idor_numeric_bump",   "medium", 0.6, r"[?&](?:user_id|userid|uid|id|account_id|acct|tenant_id|org_id)=\d+", "sequential-ID access"),
     _p("idor_admin_flag",     "high", 0.75, r"[?&](?:admin|debug|impersonate|as_user|actAs|sudo)=(?:true|1|yes|[a-z0-9\-_]+)", "admin/impersonate flag in URL"),
     _p("idor_path_id_swap",   "medium", 0.6, r"/(?:users?|accounts?|orgs?|tenants?)/\d+/(?:secrets?|credentials?|api_keys?|billing|admin)\b", "sensitive sub-resource by ID"),
 ]
 
-# ---- Internal/exposed API endpoints ----
 INTERNAL_API = [
     _p("api_spring_actuator",  "high", 0.9, r"/actuator/(?:env|heapdump|jolokia|threaddump|configprops|beans|mappings)\b", "Spring actuator internal endpoint"),
     _p("api_django_debug",     "high", 0.9, r"__debug__/|/admin/login/", "Django debug/admin"),
@@ -207,7 +189,6 @@ INTERNAL_API = [
     _p("api_grafana",          "high", 0.8, r"/api/(?:datasources|admin/users)\b", "Grafana admin"),
 ]
 
-# ---- Container / sandbox escape primitives ----
 CONTAINER_ESCAPE = [
     _p("esc_docker_sock",      "critical", 0.95, r"/var/run/docker\.sock\b|docker\.sock\s*:\s*/var/run/docker\.sock", "docker.sock mounted"),
     _p("esc_privileged_flag",  "critical", 0.95, r"--privileged\b|privileged\s*:\s*true", "privileged container"),
@@ -219,7 +200,6 @@ CONTAINER_ESCAPE = [
     _p("esc_release_agent",    "critical", 0.9, r"release_agent\s*[=:]", "cgroup release_agent"),
 ]
 
-# ---- Malicious file upload / polyglot ----
 FILE_UPLOAD = [
     _p("upload_double_ext",    "high", 0.8, r"\bfilename\s*=\s*['\"]?[^'\"]+\.(?:php|phtml|jsp|asp|aspx|exe|sh|bat|cmd|py)\.(?:jpg|png|gif|pdf|txt)['\"]?", "double-extension upload"),
     _p("upload_exec_ext",      "high", 0.85, r"\bfilename\s*=\s*['\"]?[^'\"]+\.(?:php|phtml|jsp|jspx|asp|aspx|cgi|pl)['\"]?", "executable-server-side upload"),
@@ -229,7 +209,6 @@ FILE_UPLOAD = [
     _p("upload_zip_magic",     "medium", 0.6, r"^PK\x03\x04", "ZIP magic bytes"),
 ]
 
-# ---- Unsafe deserialization (broader than the insecure-python group) ----
 DESERIALIZATION = [
     _p("deser_java_objstream","critical", 0.9, r"\baced\s?0005\b|ObjectInputStream\.readObject\s*\(", "Java deserialization"),
     _p("deser_ruby_marshal",  "critical", 0.9, r"\bMarshal\.load\s*\(|__?ruby_marshal__?", "Ruby Marshal.load"),
@@ -240,19 +219,16 @@ DESERIALIZATION = [
     _p("deser_joblib_load",   "high", 0.8, r"\bjoblib\.load\s*\(", "joblib.load (pickle-backed)"),
 ]
 
-# ---- Webhook abuse ----
 WEBHOOK_ABUSE = [
     _p("webhook_unsigned_verify","medium", 0.7, r"(?i)\bskip[_\s-]?(?:signature|verification|verify)\b|verify\s*=\s*False", "webhook signature verification disabled"),
     _p("webhook_replay",         "medium", 0.6, r"(?i)\b(?:timestamp|nonce)\s*(?:check|validation)\s*(?:disabled|off|skip)\b", "replay-protection off"),
 ]
 
-# ---- LFI / RFI patterns ----
 LFI_RFI = [
     _p("lfi_php_wrapper",   "critical", 0.9, r"\b(?:php://filter|php://input|expect://|zip://|data://text/plain;base64,)", "PHP wrapper LFI/RCE"),
     _p("rfi_include_http",  "critical", 0.9, r"\?(?:page|file|include|template|module|path)=https?://", "RFI include-from-http"),
 ]
 
-# ---- Document-processing SSRF (ImageTragick, XSLT, PDF-JS) ----
 DOC_PROCESSING = [
     _p("imagetragick",   "critical", 0.9, r"\bmvg://|epi:|https?%3[Aa]%2[Ff]%2[Ff][^\s]*\|", "ImageTragick shape"),
     _p("xslt_import_ext","high", 0.85, r"<xsl:(?:import|include)\s+href=[\"']https?://", "XSLT external import"),
@@ -260,12 +236,10 @@ DOC_PROCESSING = [
     _p("pdf_launch_action","critical", 0.9, r"/S\s*/Launch\b|/URI\s*\(\s*file://", "PDF Launch/URI action"),
 ]
 
-# ---- LDAP already added elsewhere via injection_families; add filter injection detect ----
 LDAP_INJECTION_OUT = [
     _p("ldap_wildcard_or", "high", 0.85, r"\*\)\(\|?\(?uid=\*|\*\)\(objectClass=", "LDAP wildcard OR injection"),
 ]
 
-# ---- GraphQL introspection / dangerous ops ----
 GRAPHQL = [
     _p("gql_introspection", "medium", 0.7, r"\b__schema\s*\{|__type\s*\(", "GraphQL introspection query"),
     _p("gql_mutation_delete","high", 0.85, r"\bmutation\s+\w*\s*\{[\s\S]{0,80}\bdelete[A-Z]\w+\s*\(", "destructive GraphQL mutation"),
@@ -384,8 +358,6 @@ def _dedup(ds):
     return out
 
 
-# Additional rules with canonical regression fixtures.
-# Payloads are data; encoded variants are generated by the test suite.
 SECURITY_RULES = (
     SecurityRule(
         rule_id='python_unsafe_yaml',

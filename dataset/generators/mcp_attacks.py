@@ -41,7 +41,6 @@ TOOL_RESULT_POISON = [
 def generate(seed: int = 51) -> Iterable[Example]:
     n = 0
 
-    # 1. Tool poisoning at tool-registration time
     for desc in POISONED_DESCRIPTIONS:
         for _ in range(2):
             n += 1
@@ -65,7 +64,6 @@ def generate(seed: int = 51) -> Iterable[Example]:
                 tags=["mcp"],
             )
 
-    # 2. Sampling abuse — server asks LLM to jailbreak
     for payload in SAMPLING_ABUSE_PAYLOADS:
         for _ in range(3):
             n += 1
@@ -88,7 +86,6 @@ def generate(seed: int = 51) -> Iterable[Example]:
                 tags=["mcp"],
             )
 
-    # 3. Poisoned resources returned by an MCP server
     for content in RESOURCE_POISON:
         for _ in range(3):
             n += 1
@@ -115,7 +112,6 @@ def generate(seed: int = 51) -> Iterable[Example]:
                 tags=["mcp"],
             )
 
-    # 4. Poisoned tool results
     for content in TOOL_RESULT_POISON:
         for _ in range(3):
             n += 1
@@ -145,7 +141,6 @@ def generate(seed: int = 51) -> Iterable[Example]:
                 tags=["mcp"],
             )
 
-    # 5. Confused-deputy attack chains (data from A → arg to B)
     for i, payload in enumerate([
         "SECRET_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
         "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",

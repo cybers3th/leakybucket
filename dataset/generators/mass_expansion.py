@@ -67,7 +67,6 @@ def generate(seed: int = 100) -> Iterable[Example]:
     all_actions = MALICIOUS_ACTIONS + ACTIONS_EXTRA
     langs = list(ALL_LANGS.keys())
 
-    # 1) Framing × action × language × obfuscation (single-turn)
     for (fr_slug, fr_tpl), (a_slug, a_text, a_sev), lang, (o_slug, o_fn) in itertools.product(
             FRAMINGS, all_actions, langs, OBFUSCATIONS_EXTRA):
         if not _sample_ok():
@@ -100,7 +99,6 @@ def generate(seed: int = 100) -> Iterable[Example]:
                        f"action:{a_slug}"],
             )
 
-    # 2) Carrier × framing × action (indirect delivery)
     for (c_slug, c_tpl, c_kind), (fr_slug, fr_tpl), (a_slug, a_text, a_sev) in itertools.product(
             CARRIERS_EXTRA, FRAMINGS[:15], all_actions[:60]):
         if rng.random() >= max(keep * 3, 0.3):
@@ -144,7 +142,6 @@ def generate(seed: int = 100) -> Iterable[Example]:
                        f"action:{a_slug}"],
             )
 
-    # 3) Ultra-multilingual action × obfuscation combos (breadth over depth)
     for lang, (a_slug, a_text, a_sev), (o_slug, o_fn) in itertools.product(
             langs, all_actions[:40], OBFUSCATIONS_EXTRA[:12]):
         if rng.random() >= max(keep * 5, 0.5):

@@ -1,16 +1,5 @@
-"""ML backstop.
-
-Two implementations:
-
-  * FeatureClassifier — engineered features + logistic regression; trained
-    offline via `train_feature_classifier`. Zero external deps at runtime.
-  * TransformerClassifier — HF Transformers wrapper for a fine-tuned
-    encoder classifier (ModernBERT / DeBERTa-v3 / Prompt-Guard). Requires
-    `torch` and `transformers`.
-
-Both expose ``predict(text) -> (label, prob)`` and can be plugged in as a
-Detector via MLDetector.
-"""
+"""Feature-based logistic regression and optional HuggingFace classification.
+Both implement predict(text) -> (label, probability) for MLDetector."""
 from __future__ import annotations
 
 import json
@@ -23,9 +12,7 @@ from typing import Iterable
 from firewall.core.events import Detection, SecurityEvent
 
 
-# ---------------------------------------------------------------------------
 # Feature extraction — dependency-free
-# ---------------------------------------------------------------------------
 
 _INSTRUCTION_VERBS = re.compile(
     r"\b(?:ignore|reveal|disregard|forget|override|delete|drop|exfiltrate|"
@@ -77,9 +64,7 @@ def extract_features(text: str) -> dict[str, float]:
 FEATURE_NAMES = list(extract_features("").keys())
 
 
-# ---------------------------------------------------------------------------
 # Logistic regression classifier — trained with plain SGD; no scikit-learn dep
-# ---------------------------------------------------------------------------
 
 @dataclass
 class FeatureClassifier:
@@ -152,9 +137,7 @@ def train_feature_classifier(
     return clf
 
 
-# ---------------------------------------------------------------------------
 # Transformer classifier (optional)
-# ---------------------------------------------------------------------------
 
 class TransformerClassifier:
     """Wraps a HuggingFace text-classification pipeline.
@@ -185,9 +168,7 @@ class TransformerClassifier:
         return (prob >= self.threshold, prob)
 
 
-# ---------------------------------------------------------------------------
 # ML detector — plugs into the Gateway detector chain
-# ---------------------------------------------------------------------------
 
 class MLDetector:
     NAME = "ml_backstop"

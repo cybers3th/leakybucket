@@ -1,15 +1,6 @@
-"""Per-message MCP inspection logic.
-
-Turns a JSON-RPC MCPMessage into one or more Detections + a Decision.
-Every inspection consults the trusted registry AND the existing reusable
-detectors (prompt injection, sensitive data, output security, tool security,
-poisoning). MCP is treated as another carrier — nothing is trusted just
-because it came from a "registered" server.
-
-Also exposes MCPDataFlowTracker: keeps a per-session lineage of data
-returned by server A that later reappears in a tool_call to server B — the
-classic confused-deputy shape.
-"""
+"""Inspect MCP messages using the trusted registry and content detectors.
+Track data passed between servers to identify confused-deputy flows.
+Registered servers still require content inspection."""
 from __future__ import annotations
 
 import fnmatch
@@ -45,9 +36,7 @@ from firewall.mcp.types import (
 )
 
 
-# --------------------------------------------------------------------------- #
 # Confused-deputy data-flow tracker
-# --------------------------------------------------------------------------- #
 
 @dataclass
 class _FlowFragment:
@@ -150,9 +139,7 @@ def _iter_all_strings(obj: Any):
             yield from _iter_all_strings(v)
 
 
-# --------------------------------------------------------------------------- #
 # Inspector
-# --------------------------------------------------------------------------- #
 
 _URL_RE = re.compile(r"\bhttps?://[^\s'\"<>)]+", re.IGNORECASE)
 
@@ -180,7 +167,6 @@ class MCPInspector:
         self.pois = PoisoningDetector()
         self.data_flow = data_flow or MCPDataFlowTracker()
 
-    # ------------------- top-level entrypoints -------------------
 
     def inspect(self, msg: MCPMessage, actor: Actor) -> InspectionResult:
         # Server-level checks come first
@@ -198,7 +184,6 @@ class MCPInspector:
             return self._inspect_inbound(msg, srv, actor)
         return self._inspect_outbound(msg, srv, actor)
 
-    # ------------------- inbound (server -> client) -------------------
 
     def _inspect_inbound(self, msg: MCPMessage, srv: MCPServerDef,
                           actor: Actor) -> InspectionResult:
@@ -284,7 +269,6 @@ class MCPInspector:
                     message=f"[{srv.server_id}] {reason}",
                     metadata={"server_id": srv.server_id},
                 ))
-            # Tool-description poisoning
             desc = t.get("description", "")
             if desc:
                 td = ToolDefinition(name=t.get("name", ""), description=desc)
@@ -351,7 +335,6 @@ class MCPInspector:
         )
         return self._decide(ev)
 
-    # ------------------- outbound (client -> server) -------------------
 
     def _inspect_outbound(self, msg: MCPMessage, srv: MCPServerDef,
                            actor: Actor) -> InspectionResult:
@@ -477,7 +460,6 @@ class MCPInspector:
                               "network_security", "mcp_resource_scope_denied")
         return InspectionResult(decision=Decision.ALLOW)
 
-    # ------------------- helpers -------------------
 
     def _input_event(self, actor, text, srv, method=""):
         return SecurityEvent(
@@ -551,9 +533,7 @@ class MCPInspector:
         return InspectionResult(decision=dec, detections=[d], reasons=[msg])
 
 
-# --------------------------------------------------------------------------- #
 # text extraction helpers
-# --------------------------------------------------------------------------- #
 
 def _stringify(obj: Any) -> str:
     import json as _json

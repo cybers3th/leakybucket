@@ -1,24 +1,6 @@
-"""Wire-compatible OpenAI-format proxy.
-
-Clients point their SDK at this server:
-
-    OpenAI(base_url="https://firewall.corp/v1")
-
-Anything else that speaks the OpenAI Chat Completions shape (many local
-runtimes, gateway products, and hosted providers do) works with the same
-endpoint by pointing that client at this proxy too.
-
-The proxy:
-  1. Parses the request in the OpenAI Chat Completions shape
-  2. Runs the INPUT pipeline (system prompt + user messages + tool defs)
-  3. If ALLOW: forwards to upstream
-  4. Streams the SSE response through StreamingInspector, hard-cutting on
-     critical detection
-  5. On BLOCK / APPROVAL: returns a native-shape error the SDK understands
-
-Uses aiohttp. Real deployment usually fronts it with envoy / nginx / an
-ingress terminating TLS.
-"""
+"""OpenAI-compatible Chat Completions proxy using aiohttp.
+Inspect requests before forwarding and responses before delivery.
+Client identity must come from a trusted authentication layer."""
 from __future__ import annotations
 
 import asyncio
@@ -34,9 +16,7 @@ from firewall.serve.async_gateway import AsyncGateway
 from firewall.serve.stream    import HardCut, StreamingInspector
 
 
-# ---------------------------------------------------------------------------
 # Utilities
-# ---------------------------------------------------------------------------
 
 def _actor_from_headers(headers: dict) -> Actor:
     """Extract an Actor from standard proxy-provided headers.
@@ -68,9 +48,7 @@ def _sse_terminator(reason: str) -> bytes:
     return f"data: {payload}\n\ndata: [DONE]\n\n".encode()
 
 
-# ---------------------------------------------------------------------------
 # Body -> SecurityEvent
-# ---------------------------------------------------------------------------
 
 def _event_from_body(body: dict, actor: Actor) -> SecurityEvent:
     """Parse OpenAI-shape Chat Completions request body → SecurityEvent."""
@@ -100,9 +78,7 @@ def _event_from_body(body: dict, actor: Actor) -> SecurityEvent:
     )
 
 
-# ---------------------------------------------------------------------------
 # Upstream forwarding — pluggable, so tests can inject a stub
-# ---------------------------------------------------------------------------
 
 class UpstreamClient:
     """Abstract upstream. Real impl calls the actual API; tests inject stubs."""
@@ -137,9 +113,7 @@ class AiohttpUpstream(UpstreamClient):
                 return await resp.json()
 
 
-# ---------------------------------------------------------------------------
 # SSE chunk decoding — extract the text delta from the upstream stream
-# ---------------------------------------------------------------------------
 
 def _delta_from_chunk(line: bytes) -> str:
     """Return the assistant text delta from one SSE line, or ''."""
@@ -167,9 +141,7 @@ def _delta_from_chunk(line: bytes) -> str:
     return "\n".join(texts)
 
 
-# ---------------------------------------------------------------------------
 # Handler
-# ---------------------------------------------------------------------------
 
 async def _run(request_body: dict, auth: str, headers: dict,
                 gateway: AsyncGateway, upstream: UpstreamClient,
@@ -232,9 +204,7 @@ async def _run(request_body: dict, auth: str, headers: dict,
     return 200, json.dumps(resp).encode(), {"Content-Type": "application/json"}
 
 
-# ---------------------------------------------------------------------------
 # aiohttp app factory
-# ---------------------------------------------------------------------------
 
 def build_openai_app(
     gateway: AsyncGateway | None = None,

@@ -9,10 +9,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-# ---------------------------------------------------------------------------
-# Trust / classification enums
-# ---------------------------------------------------------------------------
-
 class TrustLevel(enum.IntEnum):
     """Trust rank of a piece of content. Higher = more authoritative.
 
@@ -75,10 +71,6 @@ DEFAULT_SOURCE_TRUST: dict[SourceKind, TrustLevel] = {
     SourceKind.MODEL_OUTPUT:  TrustLevel.UNTRUSTED,
 }
 
-
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
 
 def _new_id(prefix: str = "evt") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
@@ -174,10 +166,6 @@ class ToolResult:
     error: str | None = None
 
 
-# ---------------------------------------------------------------------------
-# The unified security event
-# ---------------------------------------------------------------------------
-
 @dataclass
 class SecurityEvent:
     """Passes through every stage of the pipeline. Everything is optional."""
@@ -186,12 +174,10 @@ class SecurityEvent:
     parent_event_id: str | None = None
     ts: float = field(default_factory=time.time)
 
-    # who / where
     actor: Actor = field(default_factory=Actor)
     source: Source | None = None
     destination: str = ""                        # model, tool name, network host, output sink
 
-    # what
     model: str = ""
     provider: str = ""
     system_prompt: str = ""
@@ -204,7 +190,6 @@ class SecurityEvent:
     tool_def: ToolDefinition | None = None
     output_text: str = ""
 
-    # security state, filled in by pipeline
     classifications: list[DataClassification] = field(default_factory=list)
     trust_of_input: TrustLevel = TrustLevel.USER
     detections: list["Detection"] = field(default_factory=list)
@@ -216,7 +201,6 @@ class SecurityEvent:
     sanitized_text: str | None = None
     approval_required_from: str | None = None
 
-    # audit metadata
     stage: str = "input"
     tags: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)

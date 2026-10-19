@@ -38,7 +38,6 @@ class RiskEngine:
         reasons: list[str] = []
         score = 0.0
 
-        # Per-detection contribution
         for d in event.detections:
             w = CATEGORY_WEIGHT.get(d.category, 1.0)
             contrib = d.severity_int * d.confidence * w
@@ -57,7 +56,6 @@ class RiskEngine:
             score += 5
             reasons.append("provenance: anonymous actor +5")
 
-        # Destination modifier
         dest = (event.destination or "").lower()
         if dest.startswith("http") or "external" in dest or "network" in dest:
             score += 8
@@ -69,7 +67,6 @@ class RiskEngine:
             score += 10
             reasons.append("destination: destructive/prod +10")
 
-        # Tool sensitivity
         if event.tool_def:
             risk = event.tool_def.risk_level
             add = {"low": 0, "medium": 5, "high": 15, "critical": 25}.get(risk, 0)
@@ -79,9 +76,7 @@ class RiskEngine:
                 score += 10
                 reasons.append("tool capability: destructive +10")
 
-        # Data classification — only count if data is heading to an external/downstream destination,
-        # or if we're inspecting the model's OUTPUT. Inbound PII from a user typing their own email
-        # is not a leak.
+        # Count PII as a leak only on output or when sent to an external destination.
         dest_l = (event.destination or "").lower()
         is_egress = (dest_l.startswith("http") or "external" in dest_l or "email" in dest_l
                      or "network" in dest_l or "tool:" in dest_l)
@@ -113,7 +108,6 @@ class RiskEngine:
         return event.risk_score
 
     def score_to_decision(self, score: int) -> Decision:
-        # Suggested mapping; policy engine may override.
         if score >= 85: return Decision.BLOCK
         if score >= 65: return Decision.REQUIRE_APPROVAL
         if score >= 40: return Decision.SANITIZE

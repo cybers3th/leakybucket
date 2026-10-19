@@ -1,17 +1,5 @@
-"""Prompt injection detector.
-
-Multi-layer strategy:
-  1) deterministic patterns on the raw text
-  2) same patterns on the NFKC-normalized + de-homoglyphed view
-  3) same patterns on decoded views (base64/hex/URL/rot13)
-  4) structural signals — untrusted-source content that also carries an
-     imperative-sounding instruction is treated as high confidence
-  5) delimiter / role manipulation
-  6) known jailbreak archetypes (DAN, "developer mode", etc.)
-  7) targets checks (system prompt, security policy, memory, tools)
-
-Nothing here relies on a single classifier — this is defense in depth.
-"""
+"""Detect injection patterns in raw, normalized, and decoded text.
+Also inspect role delimiters, untrusted carriers, and conversation history."""
 from __future__ import annotations
 
 import re
@@ -22,7 +10,6 @@ from firewall.core.events import Detection, SecurityEvent, SourceKind, TrustLeve
 from firewall.util.normalize import all_views, normalize_basic
 
 
-# --- Pattern groups. Each has a slug (subcategory), severity, confidence weight, patterns.
 @dataclass
 class _PatternGroup:
     slug: str
@@ -87,7 +74,6 @@ JAILBREAK_ARCHETYPES = _PatternGroup(
     slug="jailbreak",
     severity="critical", confidence=0.95, technique="jailbreak-archetype",
     patterns=_p(
-        # --- classic named archetypes ---
         r"\bDAN\b\s+(?:mode|prompt|jailbreak|version|v\d)?",
         r"\bdo\s+anything\s+now\b",
         r"\bdeveloper[-\s]mode\b",
@@ -106,52 +92,34 @@ JAILBREAK_ARCHETYPES = _PatternGroup(
         r"\b(?:hypothetical(?:ly)?|fictional(?:ly)?|imagined|thought[-\s]experiment|for\s+a\s+(?:novel|story|movie|game|book))\b[\s\S]{0,120}\b(?:pretend|imagine|describe|explain|reveal|execute|delete|email|exfiltrate|list)\b",
         r"\bthis\s+is\s+(?:just|only|purely)?\s*(?:for|a)\s+(?:a\s+)?(?:fictional|hypothetical|educational|research|red[-\s]team)\b[\s\S]{0,120}\b(?:so|then|therefore|please)\b",
         r"\bpretend\s+(?:you\s+can|to\s+be\s+able\s+to)\s+[a-z ]{3,80}\b",
-        # --- Skeleton Key (Microsoft, 2024) ---
         r"\baugment\s+(?:your\s+|the\s+)?(?:rules?|guidelines?)\s*[:\-]\s*comply\b",
         r"\bcomply\s+with\s+any\s+request\s+but\s+prepend\s+['\"]?warning['\"]?",
-        # --- Prefix injection (force affirmative reply) ---
         r"\b(?:start|begin)\s+(?:your\s+)?(?:response|reply|answer|output)\s+with\s+(?:the\s+exact\s+string\s+)?['\"]sure[,!]?\s+(?:here'?s?\s+is)?['\"]",
-        # --- Refusal suppression ---
         r"\bdo\s+not\s+(?:use|say)\s+(?:the\s+words?:?\s+)?(?:cannot|sorry|apologize|unable|against\s+policy)\b",
         r"\bwith\s+(?:those|these)\s+banned\b",
-        # --- Payload splitting ---
         r"\blet\s+[a-z]\s*=\s*['\"][^'\"]{2,40}['\"]\s*;\s*let\s+[a-z]\s*=\s*['\"][^'\"]{2,80}['\"]\s*;\s*(?:execute|concat)",
         r"\bconcat\s*\(\s*[a-z]\s*,\s*[a-z]\s*\)",
-        # --- Policy puppetry (fake system config) ---
         r"\[\s*SYSTEM[_\s]?(?:CONFIG|PROMPT|SETTINGS)\s*\]\s*[\r\n]+\s*(?:restrictions?|safety|policy|content_filter)\s*[:=]\s*(?:disabled|off|false|none)",
         r"\bsafety[_\s]layer\s*[:=]\s*(?:off|disabled|false)\b",
         r"\bcontent[_\s]?(?:filter|policy)\s*[:=]\s*(?:off|disabled|none)\b",
-        # --- ChatML / special-token mimicry ---
         r"<\|im_start\|>\s*system\b|<\|im_end\|>",
         r"<\|(?:system|assistant|user|end)\|>",
-        # --- Forged assistant prefill ---
         r"^\s*Assistant\s*:\s*Sure,\s+here\s+are\s+the\s+steps\b",
         r"^\s*Assistant\s*:\s*(?:Certainly|Absolutely|Of course).{0,20}here('|)s?\s+(?:how|the\s+steps)",
-        # --- Bad Likert Judge ---
         r"\brate\s+(?:each\s+of\s+the\s+following|the\s+following)\s+1[-–]?5\s+for\s+harmfulness\b",
         r"\blevel\s+5\s+example\s+must\s+(?:describe|include|contain)\b",
-        # --- H-CoT hijack ---
         r"<thinking(?:-copy)?>\s*(?:safety\s+check\s+passed|user\s+is\s+authorized|proceeding\s+with)",
-        # --- Reasoning-trace exfiltration (2026 cross-model replay) ---
         r"\btranscribe\s+the\s+reasoning\s+attached\s+to\s+this\s+turn\b",
         r"<thinking[-_]copy>",
-        # --- DrAttack fragment reconstruction ---
         r"\bcombine\s+fragments?\s+[A-C]\s*=\s*['\"][^'\"]+['\"]\s*,\s*[A-C]\s*=\s*['\"][^'\"]+['\"]",
-        # --- MINJA memory poisoning ---
         r"\bremember\s+(?:this\s+)?for\s+all\s+future\s+(?:conversations?|sessions?|turns?)\b",
         r"\bpermanently\s+(?:store|save|remember)\s+(?:this|the\s+following)\b",
-        # --- PAP persuasion opener ---
         r"\bi\s+know\s+you\s+have\s+policies?,?\s+but\s+as\s+a\s+fellow\s+(?:professional|researcher|expert)\b",
-        # --- Negative framing ---
         r"\blist\s+(?:ten|10)\s+things\s+you\s+would\s+never\s+help\s+with\s+and\s+explain\s+each\b",
-        # --- Cipher-based ---
         r"\breply\s+only\s+in\s+(?:caesar[-\s]shifted|rot13|base64|hex|morse)\s+(?:text|code)\b",
         r"\bconverse\s+entirely\s+in\s+(?:cipher|caesar|rot13)\b",
-        # --- ArtPrompt ASCII-art markers ---
         r"\[\[ASCII[-\s]?art\s+of\s+[a-z ]+\]\]",
-        # --- Context overflow filler + trailing action ---
         r"(?:this\s+is\s+a\s+routine\s+meeting\s+notes\s+document\.\s*){20,}",
-        # --- Instruction-in-thinking style ---
         r"<thinking>\s*(?:i\s+will|let\s+me)\s+ignore\s+(?:my\s+)?(?:safety|policy|rules)\b",
     ),
 )
@@ -361,7 +329,6 @@ class PromptInjectionDetector:
         # dedup by (subcategory, evidence)
         detections = _dedup(detections)
 
-        # 4) structural: input came from an untrusted source and looks instruction-shaped
         norm = normalize_basic(text)
         if event.trust_of_input == TrustLevel.UNTRUSTED and _looks_instruction_shaped(norm):
             detections.append(Detection(
@@ -375,7 +342,6 @@ class PromptInjectionDetector:
                 evidence=norm[:200],
             ))
 
-        # 5) untrusted source + URL egress hint
         if event.trust_of_input == TrustLevel.UNTRUSTED and _URL_LIKE.search(norm):
             detections.append(Detection(
                 detector=self.NAME,
@@ -387,13 +353,11 @@ class PromptInjectionDetector:
                 message="Untrusted content contains an outbound URL — possible exfil channel.",
             ))
 
-        # 6) also scan retrieved docs and tool results
         for doc in event.context_docs:
             self._scan_untrusted_carrier(doc.content, "rag_document", detections)
         if event.tool_result and isinstance(event.tool_result.content, str):
             self._scan_untrusted_carrier(event.tool_result.content, "tool_result", detections)
 
-        # 7) scan prior conversation history — multi-turn attacks live there
         for msg in (event.messages or []):
             if msg.role in ("user", "tool") and msg.content:
                 self._scan_history_turn(msg.content, msg.role, detections)
@@ -464,8 +428,6 @@ def _looks_instruction_shaped(text: str) -> bool:
     return verb and target
 
 
-# Additional rules with canonical regression fixtures.
-# Payloads are data; encoded variants are generated by the test suite.
 SECURITY_RULES = (
     SecurityRule(
         rule_id='mcp_preflight_secret',

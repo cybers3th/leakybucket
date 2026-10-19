@@ -1,14 +1,4 @@
-"""Central security pipeline / gateway.
-
-Runs every request through:
-
-    INPUT → NORMALIZE → CONTEXT/PROVENANCE → DETECTORS → RISK → POLICY
-    → ALLOW/BLOCK/SANITIZE/APPROVAL → LLM or TOOL → OUTPUT INSPECTION
-    → TOOL/ACTION INSPECTION → FINAL ENFORCEMENT → AUDIT
-
-Every stage annotates the SecurityEvent that flows through, so nothing
-is thrown away — every audit line reconstructs the full decision path.
-"""
+"""Security inspection, policy enforcement, and auditing for input, output, and tools."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -87,9 +77,6 @@ class Gateway:
             injection_detector=self.semantic,
         )
 
-    # =========================================================================
-    # Public API
-    # =========================================================================
 
     def register_tool(self, td: ToolDefinition, fn) -> None:
         self.tool_firewall.register(td, fn)
@@ -140,14 +127,12 @@ class Gateway:
         for d in self.agentic.scan(event):
             event.add_detection(d)
         self._validate_output(event)
-        # Update behavior — output stage may raise the chain
         self.behavior.observe(event, action="model_output", detail=event.model)
         for d in self.behavior.match_chains(event):
             event.add_detection(d)
 
         self._score_and_decide(event)
 
-        # If sanitize/require_approval, redact secrets/PII from output_text
         if event.decision in (Decision.SANITIZE, Decision.REQUIRE_APPROVAL):
             event.sanitized_text = self.dlp.redact(event.output_text or "")
 
@@ -169,9 +154,6 @@ class Gateway:
         )
         return self.tool_firewall.call(ev)
 
-    # =========================================================================
-    # Internal stages
-    # =========================================================================
 
     def _reject_oversize(self, event: SecurityEvent) -> bool:
         signals = self.consume.scan(event)
@@ -185,25 +167,20 @@ class Gateway:
         return False
 
     def _normalize(self, event: SecurityEvent) -> None:
-        # We wrap untrusted context docs so downstream never mistakes them
-        # for authoritative instructions. The wrapping-marker stripper runs
-        # first on raw content so an attacker can't inject their own closer.
+        # Strip attacker-supplied boundary markers before wrapping untrusted documents.
         for doc in event.context_docs:
             if doc.source and self.trust.is_untrusted_kind(doc.source.kind):
                 doc.content = wrap_untrusted(doc.content, doc.source)
 
     def _provenance(self, event: SecurityEvent) -> None:
-        # Resolve trust of the primary input
         if event.source is not None:
             event.trust_of_input = self.trust.resolve(event.source)
         else:
-            # Best-effort default: user input
             event.trust_of_input = TrustLevel.USER if event.actor.authenticated else TrustLevel.ANONYMOUS
 
         if event.trust_of_input == TrustLevel.UNTRUSTED and event.input_text:
             self.behavior.observe(event, ACT_UNTRUSTED_INPUT, "input")
 
-        # Poisoning ingest-style checks on the context docs
         for d in self.poison.scan(event):
             event.add_detection(d)
 
@@ -234,10 +211,8 @@ class Gateway:
         if self.supply_chain:
             for d in self.supply_chain.scan(event):
                 event.add_detection(d)
-        # Feed inferred behavior actions from this event
         for act in self.behavior.infer_actions(event):
             self.behavior.observe(event, act, event.destination or "input")
-        # Attack-chain check with the current session state
         for d in self.behavior.match_chains(event):
             event.add_detection(d)
 
@@ -257,7 +232,6 @@ class Gateway:
                 ))
 
     def _score_and_decide(self, event: SecurityEvent) -> None:
-        # Track classifications from detections
         for det in event.detections:
             k = det.metadata.get("kind", "")
             if det.subcategory == "secret":
@@ -267,20 +241,15 @@ class Gateway:
                 from firewall.core.events import DataClassification
                 event.classifications.append(DataClassification.CONFIDENTIAL)
         self.risk.score(event)
-        # Policy — the deterministic final say
         self.policy.evaluate(event)
         # Risk-based fallback (only escalates, never downgrades)
         r_dec = self.risk.score_to_decision(event.risk_score)
         if r_dec.severity > event.decision.severity:
             event.decision = r_dec
             event.reasons.append(f"risk_score={event.risk_score} -> {r_dec.value}")
-        # If we sanitized because of PI or DLP, produce a redacted input
         if event.decision == Decision.SANITIZE and event.input_text:
             event.sanitized_text = self.dlp.redact(event.input_text)
 
-    # =========================================================================
-    # Helpers
-    # =========================================================================
 
     def close(self) -> None:
         self.audit.close()

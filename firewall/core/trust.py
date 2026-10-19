@@ -46,8 +46,7 @@ class TrustResolver:
             return TrustLevel.UNTRUSTED
         base = source.effective_trust()
         if source.origin in self.trusted_origins and source.kind in UNTRUSTED_KINDS:
-            # Origin is on the trusted list, promote to DEVELOPER not SYSTEM —
-            # we don't want a document to override the actual system prompt.
+            # Trusted documents may receive DEVELOPER trust, never SYSTEM trust.
             return TrustLevel.DEVELOPER
         return base
 
