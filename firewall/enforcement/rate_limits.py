@@ -22,8 +22,8 @@ class RateLimiter:
 
     def __init__(self, default_rate_per_minute: int = 60, capacity: int = 60,
                  max_keys: int = 10_000):
-        if default_rate_per_minute <= 0 or capacity <= 0 or max_keys <= 0:
-            raise ValueError("rate limiter limits must be positive")
+        if any(type(value) is not int or value <= 0 for value in (default_rate_per_minute, capacity, max_keys)):
+            raise ValueError("rate limiter limits must be positive integers")
         self.max_keys = max_keys
         self.rate = default_rate_per_minute
         self.capacity = capacity

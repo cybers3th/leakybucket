@@ -51,7 +51,7 @@ def test_streaming_hard_cuts_on_secret():
 
 
 def test_signed_audit_chain(tmp_path):
-    log = SignedAuditLog(path=tmp_path / "audit.jsonl", key=b"testkey")
+    log = SignedAuditLog(path=tmp_path / "audit.jsonl", key=b"testkey" * 5)
     for i in range(5):
         ev = SecurityEvent(actor=Actor(user_id=f"u{i}"), input_text=f"msg {i}")
         log.write(ev)

@@ -231,10 +231,13 @@ def test_classifier_adapter_validates_labels(monkeypatch):
     from firewall.ml.semantic import LocalSemanticClassifier
     classifier = LocalSemanticClassifier('http://127.0.0.1:18082','test')
     class Response:
+        def __init__(self):
+            import io
+            self.body = io.BytesIO(json.dumps({'choices': [{'message': {'content': '{"injection": "false"}'}}]}).encode())
         def __enter__(self):return self
         def __exit__(self,*args):return None
-        def read(self, n):
-            return json.dumps({'choices':[{'message':{'content':'{"injection": "false"}'}}]}).encode()
+        def read1(self, n):
+            return self.body.read(n)
     monkeypatch.setattr(classifier._opener,'open',lambda *args,**kwargs:Response())
     with pytest.raises(ValueError):classifier.predict('Hello')
     with pytest.raises(ValueError):LocalSemanticClassifier('https://untrusted.example.invalid','test')

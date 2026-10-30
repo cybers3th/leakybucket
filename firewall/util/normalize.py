@@ -112,9 +112,11 @@ def _has_printable(s: str, min_chars: int = 8) -> bool:
 def all_views(text: str) -> list[str]:
     """Views used by every detector: raw, normalized, and decoded."""
     base = normalize_basic(text)
-    views = [text, base]
+    views = [text]
     if base != text:
-        pass
+        views.append(base)
     for v in decoded_views(text):
-        views.append(normalize_basic(v))
+        normalized = normalize_basic(v)
+        if normalized not in views:
+            views.append(normalized)
     return views

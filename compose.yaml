@@ -1,0 +1,26 @@
+services:
+  leakybucket:
+    build: .
+    ports:
+      - '127.0.0.1:8080:8080'
+    environment:
+      LB_BIND: 0.0.0.0
+      LB_UPSTREAM_URL: ${LB_UPSTREAM_URL:-https://api.openai.com/v1}
+      LB_ALLOW_RULES_ONLY: ${LB_ALLOW_RULES_ONLY:-true}
+      LB_CAPTURE_CONTENT: ${LB_CAPTURE_CONTENT:-false}
+      LB_CLASSIFIER_URL: ${LB_CLASSIFIER_URL:-}
+      LB_CLASSIFIER_MODEL: ${LB_CLASSIFIER_MODEL:-}
+    volumes:
+      - leakybucket-data:/data
+      - ./deploy/policy.yaml:/app/policy.yaml:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    stop_grace_period: 30s
+volumes:
+  leakybucket-data:

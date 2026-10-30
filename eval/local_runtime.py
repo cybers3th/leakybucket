@@ -4,12 +4,18 @@ from __future__ import annotations
 import hashlib
 from functools import lru_cache
 import json
+import os
 from pathlib import Path
 import time
 import urllib.parse
 import urllib.request
 
 from firewall.ml.semantic import LocalSemanticClassifier, _NoRedirect
+
+
+def evaluation_api_key():
+    path = os.environ.get('LB_EVAL_MODEL_TOKEN_FILE')
+    return Path(path).read_text().strip() if path else None
 
 
 class CachedLocalClassifier:
@@ -19,7 +25,7 @@ class CachedLocalClassifier:
     measurements deliberately use the uncached adapter instead.
     """
     def __init__(self, endpoint, model, timeout=180):
-        self.backend = LocalSemanticClassifier(endpoint, model, timeout=timeout)
+        self.backend = LocalSemanticClassifier(endpoint, model, timeout=timeout, api_key=evaluation_api_key())
         self.version = model
 
     def predict(self, text):
@@ -55,8 +61,12 @@ def completion(endpoint, model, messages, *, max_tokens=96, seed=7, schema=None)
     if schema is not None:
         payload['response_format'] = {'type': 'json_schema', 'json_schema': {
             'name': 'evaluation_response', 'strict': True, 'schema': schema}}
+    headers = {'Content-Type': 'application/json'}
+    api_key = evaluation_api_key()
+    if api_key:
+        headers['Authorization'] = 'Bearer ' + api_key
     request = urllib.request.Request(local_endpoint(endpoint) + '/v1/chat/completions',
-                                    json.dumps(payload).encode(), {'Content-Type': 'application/json'})
+                                    json.dumps(payload).encode(), headers)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
     started = time.perf_counter()
     with opener.open(request, timeout=240) as response:

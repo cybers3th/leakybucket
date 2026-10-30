@@ -189,6 +189,18 @@ class MLDetector:
         return None
 
     def scan(self, event: SecurityEvent) -> list[Detection]:
+        from firewall.core.deadline import inspection_budget
+        try:
+            with inspection_budget(getattr(self.clf, "inspection_timeout", 10)):
+                return self._scan(event)
+        except TimeoutError:
+            return [Detection(detector=self.NAME, category=self.category,
+                              subcategory="semantic_inspection_failed", severity="critical",
+                              confidence=1.0, message="Semantic inspection deadline exceeded")]
+
+
+    def _scan(self, event: SecurityEvent) -> list[Detection]:
+        from firewall.core.deadline import remaining_seconds
         from firewall.util.security_rules import candidate_texts
         out: list[Detection] = []
         seen = set()
@@ -196,9 +208,15 @@ class MLDetector:
         windows = 0
         try:
             for location, text in candidate_texts(event, "all"):
-                if not text or text in seen:
+                source_location = location
+                if location == "input":
+                    source_location = "input:" + event.source.kind.value if event.source is not None else "input"
+                elif location == "history:user":
+                    source_location = "input" if event.source is None else "input:user"
+                key = (source_location, text)
+                if not text or key in seen:
                     continue
-                seen.add(text)
+                seen.add(key)
                 inspected_chars += len(text)
                 if inspected_chars > 50_000:
                     raise ValueError("Semantic inspection budget exceeded")
@@ -208,11 +226,10 @@ class MLDetector:
                     if windows > 32:
                         raise ValueError("Semantic inspection budget exceeded")
                     window = text[start:start + 3000]
-                    source_location = location
-                    if location == "input" and event.source is not None:
-                        source_location += ":" + event.source.kind.value
+                    remaining_seconds()
                     scoped_predict = getattr(self.clf, "predict_for_carrier", None)
                     malicious, prob = scoped_predict(window, source_location) if scoped_predict else self.clf.predict(window)
+                    remaining_seconds()
                     if type(malicious) is not bool or not math.isfinite(prob) or not 0 <= prob <= 1:
                         raise ValueError("Invalid classifier result")
                     sev = self._severity(prob) if malicious else None

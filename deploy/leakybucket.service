@@ -1,0 +1,36 @@
+[Unit]
+Description=LeakyBucket authenticated inspection proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=leakybucket
+Group=leakybucket
+WorkingDirectory=/opt/leakybucket
+EnvironmentFile=/etc/leakybucket/service.env
+ExecStart=/opt/leakybucket/venv/bin/python -m firewall.serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+StateDirectory=leakybucket
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/leakybucket
+MemoryMax=1G
+TasksMax=64
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

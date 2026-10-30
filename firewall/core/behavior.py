@@ -114,11 +114,16 @@ class BehaviorEngine:
         "max_repeated_tool_call":  10,
     }
 
-    def __init__(self, limits: dict[str, int] | None = None):
+    def __init__(self, limits: dict[str, int] | None = None, max_sessions: int = 10_000):
+        if type(max_sessions) is not int or max_sessions <= 0:
+            raise ValueError("Session capacity must be a positive integer")
+        self.max_sessions = max_sessions
         self.sessions: dict[str, SessionState] = defaultdict(lambda: SessionState(session_id=""))
         self.limits = {**self.DEFAULT_LIMITS, **(limits or {})}
 
     def _s(self, sid: str) -> SessionState:
+        if sid not in self.sessions and len(self.sessions) >= self.max_sessions:
+            raise RuntimeError("Behavior session capacity exhausted; release completed sessions")
         s = self.sessions[sid]
         if not s.session_id:
             s.session_id = sid

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import wraps
+
+from firewall.core.deadline import InspectionTimeout, inspection_budget, positive_seconds, remaining_seconds
 from typing import Any, Callable
 
 from firewall.core.audit import AuditLog
@@ -28,6 +31,25 @@ from firewall.enforcement.tool_firewall import (
 )
 
 
+def _bounded_event(method):
+    @wraps(method)
+    def inspect(self, event):
+        try:
+            with inspection_budget(self.inspection_timeout):
+                result = method(self, event)
+                remaining_seconds()
+                return result
+        except InspectionTimeout:
+            event.decision = Decision.BLOCK
+            event.add_detection(Detection(detector="gateway.deadline", category="unbounded_consumption",
+                subcategory="inspection_timeout", severity="critical", confidence=1.0,
+                message="Inspection deadline exceeded; request withheld"))
+            event.reasons.append("Inspection deadline exceeded")
+            self.audit.write(event)
+            return event
+    return inspect
+
+
 class Gateway:
     """The primary application-facing entrypoint."""
 
@@ -42,8 +64,13 @@ class Gateway:
         injection_classifier=None,
         output_constraints: OutputConstraints | None = None,
         output_validators: tuple[Callable[[SecurityEvent], bool], ...] = (),
+        inspection_timeout: float = 10,
+        audit_log: AuditLog | None = None,
     ):
-        self.audit = AuditLog(path=audit_path, echo=audit_echo)
+        self.inspection_timeout = positive_seconds(inspection_timeout)
+        if audit_log is not None and (audit_path is not None or audit_echo):
+            raise ValueError("Configure audit_log or audit_path/audit_echo, not both")
+        self.audit = audit_log if audit_log is not None else AuditLog(path=audit_path, echo=audit_echo)
         self.policy = PolicyEngine(policies or [default_baseline_policy()])
         self.risk = RiskEngine()
         self.behavior = BehaviorEngine()
@@ -81,6 +108,7 @@ class Gateway:
     def register_tool(self, td: ToolDefinition, fn) -> None:
         self.tool_firewall.register(td, fn)
 
+    @_bounded_event
     def process_input(self, event: SecurityEvent) -> SecurityEvent:
         """Run the input-side pipeline. Sets event.decision and event.sanitized_text.
 
@@ -94,9 +122,11 @@ class Gateway:
         self._provenance(event)
         self._run_input_detectors(event)
         self._score_and_decide(event)
+        remaining_seconds()
         self.audit.write(event)
         return event
 
+    @_bounded_event
     def process_output(self, event: SecurityEvent) -> SecurityEvent:
         """Run the output-side pipeline on a fresh event carrying output_text.
 
@@ -136,6 +166,7 @@ class Gateway:
         if event.decision in (Decision.SANITIZE, Decision.REQUIRE_APPROVAL):
             event.sanitized_text = self.dlp.redact(event.output_text or "")
 
+        remaining_seconds()
         self.audit.write(event)
         return event
 
@@ -152,7 +183,8 @@ class Gateway:
             source=source,
             tool_call=ToolCall(tool=tool, arguments={} if arguments is None else arguments),
         )
-        return self.tool_firewall.call(ev)
+        with inspection_budget(self.inspection_timeout):
+            return self.tool_firewall.call(ev)
 
 
     def _reject_oversize(self, event: SecurityEvent) -> bool:

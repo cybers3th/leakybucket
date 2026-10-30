@@ -6,6 +6,9 @@ executing tools or sending content downstream. The implementation is a
 hardening foundation; deployment-specific authentication, authorization,
 transport integration, load testing, and independent review are still required.
 
+For the authenticated serving process, immutable dependency lock, deadline and
+admission settings, and signed audit setup, see [the production runbook](PRODUCTION.md).
+
 ## Installation and verification
 
 ```sh
@@ -110,8 +113,9 @@ sandboxing; detections cannot undo a side effect that already happened.
 The OpenAI-format proxy treats supplied `x-lb-*` headers as untrusted. Configure
 `build_openai_app(actor_resolver=...)` with an authentication function that returns
 a verified, authenticated `Actor`. The resolver may be asynchronous. In its
-absence, requests use an anonymous actor; the app does not authenticate users.
-Use an authenticated ingress and TLS, and prevent clients from bypassing it.
+absence, app construction fails unless `allow_anonymous=True` is explicitly set.
+The standard serving launcher requires a provisioned service credential. Use an
+authenticated ingress and TLS, and prevent clients from bypassing it.
 Transport OAuth must validate token issuer, audience, scope and expiry. This
 message firewall is not an OAuth authorization server and does not implement
 OAuth token validation or delegation.
@@ -134,9 +138,11 @@ Standard `AuditLog` retains at most 1,000 records in memory by default. On-disk
 JSONL remains available when a path is configured. Arguments, detector evidence,
 freeform descriptions, and sensitive decision details are omitted by default.
 `include_sensitive_details=True` is an explicit opt-in for restricted diagnostics;
-protect those files as sensitive data. The separate `SignedAuditLog` still has
-its own retention and content behavior and must be reviewed before production
-use; its existing SIEM sinks are not automatically covered by these defaults.
+protect those files as sensitive data. `SignedAuditLog` now uses the same redaction
+by default, bounds retained records, verifies persisted chains on restart, and
+requires an externally managed key for persistent storage. See the production
+runbook for local file locking, durable writes, shipping failure behavior, and
+checkpoint/rotation limitations.
 
 Tenant and user IDs are included in behavioral, rate-limit, MCP correlation and
 MCP data-flow keys. Rate-limit keys and pending requests are bounded. MCP flow
@@ -145,7 +151,9 @@ its configured capacity. Release finished sessions with
 `gateway.data_flow.clear_session(actor)` and
 `gateway.behavior.release_session(event)` where applicable. A rate limiter that
 reaches its key capacity refuses new keys; lifecycle management is required.
-Behavior tracking remains in memory and requires application-managed lifecycle.
+Behavior tracking is bounded to 10,000 sessions, remains in memory, and requires
+application-managed lifecycle. Capacity exhaustion refuses new sessions without
+evicting active security history.
 
 Use one gateway per worker and preserve session affinity. In-memory lineage and
 response correlation are not shared across workers. The repository's distributed

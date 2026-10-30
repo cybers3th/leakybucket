@@ -81,8 +81,7 @@ class AuditLog:
             if record["tool_call"]:
                 record["tool_call"]["arguments"] = {"redacted": True}
             if record["tool_def"]:
-                record["tool_def"]["description"] = "[omitted]"
-                record["tool_def"]["metadata"] = {}
+                record["tool_def"] = {"name": event.tool_def.name, "risk_level": event.tool_def.risk_level}
             record["source_origin"] = "[omitted]" if event.source else None
             record["destination"] = "[omitted]"
             record["reasons"] = ["decision details omitted"] if event.reasons else []

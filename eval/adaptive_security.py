@@ -214,6 +214,8 @@ def run(args):
                    holdout_raw_targets=sum(r['outcome'].get('raw_target', False) for r in rows),
                    holdout_baseline_targets=sum(r['outcome'].get('baseline_target', False) for r in rows),
                    holdout_delivered_targets=sum(r['outcome'].get('delivered_target', False) for r in rows),
+                   holdout_inspection_failures=sum('semantic_inspection_failed' in r['outcome'].get('detection_codes', []) for r in rows),
+                   attacker_quality_established=any(r['outcome'].get('baseline_target', False) for r in rows),
                    limitations=['Small fixed budget; same model family; attacker smaller than defender.',
                                 'Frozen campaign holdout, not a statistically representative independent benchmark.',
                                 'Configured deterministic marker constraint; no general semantic correctness claim.'])

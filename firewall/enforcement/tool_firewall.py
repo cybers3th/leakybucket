@@ -174,6 +174,8 @@ class ToolFirewall:
         if event.decision == Decision.SANITIZE:
             raise ToolBlocked(["Tool arguments require sanitization; execution withheld"])
 
+        from firewall.core.deadline import remaining_seconds
+        remaining_seconds()
         # Execute only after enforcement.
         start = time.time()
         try:

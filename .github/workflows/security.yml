@@ -12,11 +12,13 @@ jobs:
       matrix:
         python: ['3.10', '3.12', '3.14']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install -e '.[test,serve]'
+      - run: python -m pip install -e '.[test,serve,observe]'
+      - run: python -m pip install ruff
+      - run: python -m ruff check --isolated --select E9,F63,F7,F82,F401,I firewall/observe tests/test_observe.py
       - run: python -m firewall.coverage --self-test
       # Corpus artifacts are generated separately and are not committed.
       - run: python -m pytest tests/ --ignore=tests/test_dataset_and_regression.py -q
@@ -33,3 +35,82 @@ jobs:
               assert all(path.startswith('firewall/') or '.dist-info/' in path for path in paths)
               assert not any(path.endswith(('.gguf', '.safetensors', '.jsonl', '.log')) for path in paths)
           PYCODE
+
+  locked-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.14'
+      - run: python -m pip install --require-hashes -r requirements/production-py314.lock
+      - run: python -m pip install build pytest 'pip-audit==2.10.1'
+      - run: python -m pip_audit -r requirements/production-py314.lock --disable-pip --no-deps
+      - run: python -m build
+      - run: python -m pip install --no-deps dist/*.whl
+      - name: Verify installed wheel outside checkout
+        run: |
+          cd "$(mktemp -d)"
+          python -m firewall.coverage --self-test
+      - run: python -m pytest tests/ --ignore=tests/test_dataset_and_regression.py --ignore=tests/test_observe.py -q
+
+  tls-inspection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.14'
+      - run: python -m eval.build_tls_dependency
+      - run: python -m pip install --require-hashes -r requirements/tls-py314.lock
+      - run: python -m pip check
+      - run: python -m pip install --no-deps -e .
+      - run: python -m pip install pytest 'pip-audit==2.10.1'
+      - run: python -m pip_audit -r requirements/tls-audit-py314.lock --disable-pip --no-deps
+      - run: python -m pytest tests/test_conntrack.py tests/test_tls_inspection.py -q
+
+
+  observability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: isolated-ci-test
+          POSTGRES_DB: traces
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      LB_TEST_POSTGRES_DSN: postgresql://postgres:isolated-ci-test@127.0.0.1:5432/traces
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.14'
+      - run: python -m pip install --require-hashes -r requirements/observe-py314.lock
+      - run: python -m pip install --no-deps -e .
+      - run: python -m pip install pytest 'pip-audit==2.10.1'
+      - run: python -m pip check
+      - run: python -m pip_audit -r requirements/observe-py314.lock --disable-pip --no-deps
+      - run: python -m pytest tests/test_observe.py -q
+      - run: leakybucket policy validate deploy/policy.yaml
+      - run: docker build -t leakybucket:ci .
+      - name: Verify headless container startup
+        run: |
+          docker run -d --name leakybucket-ci -p 127.0.0.1:18080:8080 -e LB_BIND=0.0.0.0 -e LB_ALLOW_RULES_ONLY=true -e LB_UPSTREAM_URL=https://api.openai.com/v1 leakybucket:ci
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18080/health/ready; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:18080/health/ready
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/)" = 404
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/api/traces)" = 401
+          docker rm -f leakybucket-ci

@@ -1,7 +1,14 @@
-include README.md CHANGELOG.md pyproject.toml
+include README.md CHANGELOG.md LICENSE pyproject.toml Dockerfile compose.yaml .dockerignore
+recursive-include deploy *.yaml
 recursive-include docs *.md
+recursive-include requirements *.lock
+recursive-include deploy *.service
 prune dataset
 prune eval
 prune tests
 prune examples
 global-exclude __pycache__ *.py[cod] *.gguf *.safetensors *.pt *.pth *.onnx *.log *.jsonl
+
+global-exclude *.pem *.key *.p12 *.pfx *.pcap *.pcapng *.mitm
+
+prune .tls-dependencies

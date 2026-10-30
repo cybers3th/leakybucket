@@ -55,6 +55,9 @@ def _default(o):
 
 
 def main():
+    if len(sys.argv) > 1:
+        from firewall.observe.cli import main as operations
+        return operations(sys.argv[1:])
     raw = sys.stdin.read()
     if not raw.strip():
         sys.stderr.write("no input\n")

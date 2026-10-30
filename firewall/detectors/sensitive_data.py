@@ -115,7 +115,7 @@ def _pp(name: str, regex: str, severity: str = "medium") -> _PiiPattern:
     return _PiiPattern(name, re.compile(regex), severity)
 
 PII_PATTERNS: list[_PiiPattern] = [
-    _pp("email",              r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b"),
+    _pp("email",              r"(?<![a-zA-Z0-9._%+\-])[a-zA-Z0-9._%+\-]{1,64}@[a-zA-Z0-9.\-]{1,253}\.[a-zA-Z]{2,63}\b"),
     _pp("phone_e164",         r"(?:^|\s)\+[1-9]\d{6,14}(?:\s|$|[.,;])|\+1[\s\-.]\(?\d{3}\)?[\s\-.]\d{3}[\s\-.]\d{4}\b", severity="medium"),
     _pp("credit_card",        r"\b(?:\d[ \-]?){13,19}\b", severity="high"),
     _pp("ssn_us",             r"\b(?!000|666|9\d\d)\d{3}[- ]?(?!00)\d{2}[- ]?(?!0000)\d{4}\b", severity="high"),

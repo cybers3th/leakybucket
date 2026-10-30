@@ -26,3 +26,23 @@ models/
 artifacts/
 eval/*report.json
 eval/*.partial.json
+
+# Interception keys and decrypted traffic stay outside source control.
+.mitmproxy/
+*.pem
+*.key
+*.p12
+*.pfx
+*.pcap
+*.pcapng
+*.mitm
+
+.tls-dependencies/
+
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+.local-state/

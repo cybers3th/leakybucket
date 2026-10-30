@@ -1,0 +1,6 @@
+version: 1
+rules: []
+pricing: {}
+alerts:
+  latency_ms: 5000
+  cost_usd: 0.10
