@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.1.0rc1 — 2026-10-30 (prerelease)
+## 1.1.0rc1 — 2026-10-31 (prerelease)
 
-- Require the patched Brotli and Tornado TLS dependency combination and refresh hashed locks.
+- Require the patched Brotli, Tornado and pyasn1 TLS dependency combination and refresh hashed locks.
 - Add provider diagnostics with `doctor`, direct guarded requests with `chat`, and `--version`.
 - Make running-service configuration changes explicit instead of silently ignoring them.
 

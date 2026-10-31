@@ -344,3 +344,14 @@ def test_vulnerable_tornado_cannot_activate_tls_inspection(monkeypatch):
     monkeypatch.setattr(importlib.metadata, 'version', lambda name: '6.5.10' if name == 'tornado' else original(name))
     with pytest.raises(RuntimeError, match='patched Tornado'):
         ensure_tls_runtime()
+
+
+def test_vulnerable_asn1_cannot_activate_tls_inspection(monkeypatch):
+    import importlib.metadata
+    pytest.importorskip('brotli')
+    from firewall.transport.tls_gateway import ensure_tls_runtime
+
+    original = importlib.metadata.version
+    monkeypatch.setattr(importlib.metadata, 'version', lambda name: '0.6.4' if name == 'pyasn1' else original(name))
+    with pytest.raises(RuntimeError, match='patched pyasn1'):
+        ensure_tls_runtime()

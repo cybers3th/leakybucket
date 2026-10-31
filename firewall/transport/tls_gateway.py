@@ -22,6 +22,8 @@ def ensure_tls_runtime():
         raise RuntimeError('TLS inspection requires patched Brotli 1.2.1 or newer in the 1.2 series')
     if not re.fullmatch(r'6\.6(?:\.[0-9]+)?', importlib.metadata.version('tornado')):
         raise RuntimeError('TLS inspection requires patched Tornado 6.6')
+    if not re.fullmatch(r'0\.6\.(?:[5-9]|[1-9][0-9]+)', importlib.metadata.version('pyasn1')):
+        raise RuntimeError('TLS inspection requires patched pyasn1 0.6.5 or newer in the 0.6 series')
     if importlib.metadata.version('mitmproxy') != '12.3.0+leakybucket.2':
         raise RuntimeError('Install the reviewed TLS dependency wheel; upstream dependency constraints are unsafe')
 

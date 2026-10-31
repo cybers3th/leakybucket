@@ -35,7 +35,7 @@ mitmproxy-rs==0.12.15
 multidict==7.2.0
 propcache==0.5.4
 publicsuffix2==2.20191221
-pyasn1==0.6.4
+pyasn1==0.6.5
 pycparser==2.22
 pylsqpack==0.3.24
 pyopenssl==26.4.0

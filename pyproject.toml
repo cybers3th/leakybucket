@@ -15,7 +15,7 @@ dependencies = ["jsonschema>=4.22,<5"]
 observe = ["aiohttp>=3.13,<4", "PyYAML>=6.0.3,<7"]
 postgres = ["psycopg[binary]>=3.2,<4"]
 serve = ["aiohttp>=3.13,<4"]
-tls = ["mitmproxy==12.3.0+leakybucket.2; python_version >= '3.12'", "Brotli>=1.2.1,<1.3; python_version >= '3.12'", "tornado>=6.6,<6.7; python_version >= '3.12'"]
+tls = ["mitmproxy==12.3.0+leakybucket.2; python_version >= '3.12'", "Brotli>=1.2.1,<1.3; python_version >= '3.12'", "tornado>=6.6,<6.7; python_version >= '3.12'", "pyasn1>=0.6.5,<0.7; python_version >= '3.12'"]
 test = ["pytest>=8,<10"]
 
 [project.scripts]

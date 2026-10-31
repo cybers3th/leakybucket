@@ -45,7 +45,9 @@ preserves all executable code and licenses, and changes only dependency metadata
 the local package version, and wheel RECORD hashes. It builds a reproducible,
 uncompressed wheel in the ignored `.tls-dependencies/` directory. This is an
 explicit downstream packaging patch, not an upstream release. The launcher refuses
-the original dependency combination. There are no vulnerability suppressions.
+the original dependency combination. There are no vulnerability suppressions. The TLS extra and startup guard also
+require `pyasn1>=0.6.5,<0.7`, fixing CVE-2026-119194, CVE-2026-119195,
+CVE-2026-119196 and CVE-2026-119197 without changing upstream mitmproxy code.
 
 The hashed TLS lock pins that local wheel and its actual runtime dependencies.
 `requirements/tls-audit-py314.lock` is an **audit inventory only**, not an installer:
