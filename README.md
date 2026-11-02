@@ -46,6 +46,22 @@ The distribution contains only `firewall`. Corpus generators, evaluation tools,
 and tests stay in the repository as development tooling. Model weights, inference
 runtimes, transcripts, generated datasets, and audit output are excluded.
 
+## Manual
+
+```sh
+leakybucket man
+```
+
+Use `leakybucket man --plain` for unpaged text. To install the native user man page:
+
+```sh
+leakybucket man --install
+man leakybucket
+```
+
+The manual covers every CLI command, inspection modes, files, environment settings,
+exit codes and troubleshooting. Read it without starting a service.
+
 ## Terminal operations
 
 ```sh

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add a bundled command manual, `leakybucket man`, a plain-text fallback and native user man-page installation.
+
+- Preserve semantic classifier configuration across local restarts; require an explicit `--rules-only` switch to disable it.
+- Make diagnostics and startup use shared audit, gateway capacity and storage readiness.
+- Apply authenticated request quotas before custom policies and trace writes, with one admission/authentication pass.
+- Return valid JSON for an empty latest-trace query.
+
 ## 1.1.0rc1 — 2026-10-31 (prerelease)
 
 - Require the patched Brotli, Tornado and pyasn1 TLS dependency combination and refresh hashed locks.

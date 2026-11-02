@@ -1,4 +1,5 @@
 include README.md CHANGELOG.md LICENSE pyproject.toml Dockerfile compose.yaml .dockerignore
+recursive-include firewall/observe/man *.txt *.1
 recursive-include deploy *.yaml
 recursive-include docs *.md
 recursive-include requirements *.lock

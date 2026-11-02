@@ -356,6 +356,7 @@ async def _terminal_commands(tmp_path):
 
     try:
         assert (await command('status'))['policy_healthy'] is True
+        assert await command('trace') == {'trace': None}
         reply = await command('chat', '--model', 'test', 'Say hello.')
         assert reply['response']['choices'][0]['message']['content'] == 'Hello.'
         assert len(reply['trace_id']) == 32
@@ -535,3 +536,234 @@ async def _diagnostics(tmp_path):
     finally:
         await client.close()
         await server.close()
+
+
+def test_semantic_configuration_survives_restart_and_missing_credentials_fail_closed(tmp_path):
+    import os
+    import socket
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+    environment = {key: value for key, value in os.environ.items() if not key.startswith('LB_')}
+    environment.update(LB_STATE_DIR=str(tmp_path / 'state'), LB_CONFIG_DIR=str(tmp_path / 'config'),
+                       LB_PORT=str(port), PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+    credentials = tmp_path / 'classifier-token'
+    credentials.touch(mode=0o600)
+    secret = 'classifier-secret-' + 'x' * 40
+    credentials.write_text(secret)
+    configured = dict(environment, LB_CLASSIFIER_URL='http://127.0.0.1:1/v1/chat/completions',
+                      LB_CLASSIFIER_MODEL='test-classifier', LB_CLASSIFIER_TOKEN_FILE='classifier-token',
+                      LB_INSPECTION_TIMEOUT_SECONDS='7.5')
+
+    def run(*args, env=environment, check=True):
+        result = subprocess.run([sys.executable, '-m', 'firewall', *args], cwd=tmp_path, env=env,
+                                capture_output=True, text=True, timeout=35)
+        if check:
+            assert result.returncode == 0, result.stdout + result.stderr
+        return result
+
+    try:
+        run('start', env=configured)
+        assert json.loads(run('status', '--json').stdout)['inspection_mode'] == 'semantic_and_rules'
+        connection_path = tmp_path / 'state' / 'connection.json'
+        saved = json.loads(connection_path.read_text())
+        assert saved['classifier_token_file'] == str(credentials)
+        assert saved['inspection_timeout_seconds'] == '7.5'
+        assert secret not in connection_path.read_text()
+        assert 'Stop the running service' in run('start', '--rules-only', check=False).stderr
+        assert json.loads(connection_path.read_text())['inspection_mode'] == 'semantic_and_rules'
+        run('stop')
+        legacy = {key: value for key, value in saved.items() if key in {'url', 'token_file', 'policy_path', 'upstream_url'}}
+        connection_path.write_text(json.dumps(legacy))
+        rejected = run('start', check=False)
+        assert rejected.returncode == 2 and 'older profile has no saved inspection mode' in rejected.stderr
+        run('start', env=configured)
+        run('stop')
+        run('start')
+        assert json.loads(run('status', '--json').stdout)['inspection_mode'] == 'semantic_and_rules'
+        run('stop')
+        credentials.unlink()
+        failed = run('start', check=False)
+        assert failed.returncode == 2 and 'credential file is missing' in failed.stderr
+        assert json.loads(connection_path.read_text())['inspection_mode'] == 'semantic_and_rules'
+        permissive = dict(environment, LB_ALLOW_RULES_ONLY='true')
+        assert run('start', env=permissive, check=False).returncode == 2
+        incomplete = dict(saved)
+        incomplete.pop('classifier_model')
+        connection_path.write_text(json.dumps(incomplete))
+        failed = run('start', check=False)
+        assert failed.returncode == 2 and 'requires a classifier URL, model' in failed.stderr
+        run('start', '--rules-only')
+        assert json.loads(run('status', '--json').stdout)['inspection_mode'] == 'rules'
+        reset = json.loads(connection_path.read_text())
+        assert reset['inspection_mode'] == 'rules' and 'classifier_url' not in reset
+    finally:
+        run('stop', check=False)
+
+
+def test_custom_policy_blocks_share_the_proxy_quota_and_are_charged_once(tmp_path):
+    asyncio.run(_policy_quota(tmp_path))
+
+
+async def _policy_quota(tmp_path):
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from firewall.observe.app import OBSERVATION_KEY, build_observed_app
+    from firewall.serve.auth import StaticTokenAuthenticator
+    from firewall.serve.proxy import UpstreamClient
+
+    calls = []
+
+    class Upstream(UpstreamClient):
+        async def call(self, *args):
+            calls.append(args)
+            return {'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'Hello.'}, 'finish_reason': 'stop'}]}
+
+    tokens = {'a': 'a' * 40, 'b': 'b' * 40}
+    resolver = StaticTokenAuthenticator({token: Actor(user_id=name, tenant=name, session_id=name, authenticated=True)
+                                         for name, token in tokens.items()})
+    authentications = []
+
+    async def authenticate(request):
+        authentications.append(1)
+        await asyncio.sleep(0)
+        return resolver(request)
+
+    policy = policy_file(tmp_path, 'version: 1\nrules: [{name: deny, action: block, model: denied}]\n')
+    app = build_observed_app(actor_resolver=authenticate, policy_path=policy, database=':memory:', upstream=Upstream(),
+                             request_burst=1, request_rate_per_minute=1)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    body = {'model': 'denied', 'messages': [{'role': 'user', 'content': 'Say hello.'}]}
+    try:
+        async def request(token, model):
+            response = await client.post('/v1/chat/completions', json={**body, 'model': model},
+                                         headers={'Authorization': 'Bearer ' + token})
+            await response.read()
+            return response
+
+        responses = await asyncio.gather(*(request(tokens['a'], 'denied') for _ in range(8)))
+        assert sorted(response.status for response in responses) == [403] + [429] * 7
+        assert all(response.headers['Retry-After'] == '1' for response in responses if response.status == 429)
+        assert len(app[OBSERVATION_KEY].store.query('a')) == 1
+        assert not calls
+        assert (await request(tokens['a'], 'allowed')).status == 429
+        assert (await request(tokens['b'], 'allowed')).status == 200
+        assert len(calls) == 1
+        assert (await request(tokens['b'], 'denied')).status == 429
+        assert len(app[OBSERVATION_KEY].store.query('b')) == 1
+        assert len(authentications) == 11
+    finally:
+        await client.close()
+
+
+def test_doctor_and_status_share_audit_and_capacity_readiness(tmp_path):
+    asyncio.run(_readiness(tmp_path))
+
+
+async def _readiness(tmp_path):
+    from unittest.mock import patch
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from firewall import Gateway
+    from firewall.core.audit import AuditLog
+    from firewall.observe.app import OBSERVATION_KEY, build_observed_app
+    from firewall.observe.doctor import diagnose
+    from firewall.serve.async_gateway import AsyncGateway
+    from firewall.serve.auth import StaticTokenAuthenticator
+    from firewall.serve.proxy import UpstreamClient
+
+    token = 'readiness-' + 'r' * 40
+    token_file = tmp_path / 'service-token'
+    token_file.write_text(token)
+    resolver = StaticTokenAuthenticator({token: Actor(user_id='test', tenant='test', session_id='test', authenticated=True)})
+    audit = AuditLog()
+    audit.healthy = True
+    gateway = AsyncGateway(Gateway(audit_log=audit), max_concurrent=1)
+    policy = policy_file(tmp_path)
+    app = build_observed_app(actor_resolver=resolver, policy_path=policy, database=':memory:', gateway=gateway,
+                             upstream=UpstreamClient())
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    saved = {'url': str(client.make_url('/')).rstrip('/'), 'token_file': str(token_file), 'policy_path': str(policy)}
+
+    async def inspect(expected):
+        health = await client.get('/health/ready')
+        assert health.status == (200 if expected else 503)
+        status = await (await client.get('/api/status', headers={'Authorization': 'Bearer ' + token})).json()
+        assert status['ready'] is expected
+        with patch('firewall.observe.doctor.provider_probe', return_value={'state': 'ready', 'models': ['fixture']}):
+            report = await asyncio.to_thread(diagnose, tmp_path, saved)
+        assert report['ready'] is expected
+        return status
+
+    try:
+        await inspect(True)
+        audit.healthy = False
+        assert (await inspect(False))['audit_healthy'] is False
+        audit.healthy = True
+        gateway._active = 1
+        await inspect(False)
+        gateway._active = 0
+        observation = app[OBSERVATION_KEY]
+        observation.active = 32
+        await inspect(False)
+        observation.active = 0
+        await inspect(True)
+        await gateway.close()
+        assert (await inspect(False))['gateway_closed'] is True
+    finally:
+        gateway._active = 0
+        app[OBSERVATION_KEY].active = 0
+        await client.close()
+
+
+def test_quota_refactor_preserves_admission_for_slow_authentication(tmp_path):
+    asyncio.run(_slow_authentication(tmp_path))
+
+
+async def _slow_authentication(tmp_path):
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from firewall.observe.app import build_observed_app
+    from firewall.serve.proxy import UpstreamClient
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    resolutions = []
+
+    async def authenticate(request):
+        resolutions.append(1)
+        entered.set()
+        await release.wait()
+        return Actor(user_id='test', tenant='test', session_id='test', authenticated=True)
+
+    class Upstream(UpstreamClient):
+        async def call(self, *args):
+            return {'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'Hello.'}, 'finish_reason': 'stop'}]}
+
+    app = build_observed_app(actor_resolver=authenticate, policy_path=policy_file(tmp_path), database=':memory:',
+                             upstream=Upstream(), max_in_flight=1)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    body = {'model': 'test', 'messages': [{'role': 'user', 'content': 'Say hello.'}]}
+    first = asyncio.create_task(client.post('/v1/chat/completions', json=body))
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        assert (await client.get('/health/ready')).status == 503
+        assert (await client.post('/v1/chat/completions', json=body)).status == 503
+        assert len(resolutions) == 1
+        release.set()
+        response = await asyncio.wait_for(first, 3)
+        assert response.status == 200
+        await response.read()
+        assert len(resolutions) == 1
+        assert (await client.get('/health/ready')).status == 200
+    finally:
+        release.set()
+        await asyncio.gather(first, return_exceptions=True)
+        await client.close()

@@ -45,7 +45,7 @@ def start(directory, url, token_file):
             try:
                 with opener.open(request, timeout=.5) as response:
                     state = json.loads(response.read(65536))
-                if state.get('policy_healthy') and state.get('storage_healthy'):
+                if state.get('ready') is True:
                     print(f'LeakyBucket started at {url} (PID {process.pid}).')
                     print(f'Policy: {os.environ["LB_POLICY_PATH"]}')
                     mode = 'semantic classifier and built-in rules' if os.environ.get('LB_CLASSIFIER_URL') else 'built-in rules; semantic classifier is not configured'

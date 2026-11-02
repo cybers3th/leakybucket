@@ -12,7 +12,12 @@ from urllib.parse import urlsplit
 from aiohttp import ClientSession, ClientTimeout, web
 
 from firewall.serve.auth import verified_actor
-from firewall.serve.proxy import AiohttpUpstream, build_openai_app
+from firewall.serve.proxy import (
+    _REQUEST_ACTOR,
+    AiohttpUpstream,
+    build_openai_app,
+    proxy_state_key,
+)
 from firewall.util.json import strict_json_loads
 
 from .policy import load_policy
@@ -192,12 +197,14 @@ class Observation:
     @web.middleware
     async def middleware(self, request, handler):
         if request.path == '/health/ready':
-            if not self.policy_healthy or not self.storage_healthy:
+            if not self.readiness(request)['ready']:
                 return web.json_response({'ready': False}, status=503)
             return await handler(request)
         if request.path != '/v1/chat/completions':
             return await handler(request)
-        actor = await self.actor(request)
+        actor = request[_REQUEST_ACTOR]
+        if not verified_actor(actor):
+            raise web.HTTPUnauthorized(text='Authentication required')
         if self.active >= 32:
             raise web.HTTPServiceUnavailable(text='Trace admission exhausted')
         if not self.policy_healthy or not self.storage_healthy:
@@ -302,12 +309,21 @@ class Observation:
             raise web.HTTPNotFound()
         return web.json_response(row)
 
+    def readiness(self, request):
+        gateway = request.app[proxy_state_key()]()
+        ready = (gateway['ready'] and self.policy_healthy and self.storage_healthy
+                 and self.active < 32 and len(self.database_jobs) < 48)
+        return {'ready': ready, 'audit_healthy': gateway['healthy'],
+                'gateway_closed': gateway['closed'],
+                'inspection_in_flight': gateway['in_flight'], 'inspection_capacity': gateway['capacity']}
+
     async def status(self, request):
         await self.actor(request)
         return web.json_response({'policy_healthy': self.policy_healthy, 'storage_healthy': self.storage_healthy,
                                   'policy_version': self.policy.digest, 'content_captured': self.capture_content,
                                   'alert_failures': self.alert_failures, 'alert_drops': self.alert_drops,
-                                  'upstream_url': self.upstream_url, 'inspection_mode': self.inspection_mode})
+                                  'upstream_url': self.upstream_url, 'inspection_mode': self.inspection_mode,
+                                  **self.readiness(request)})
 
     async def live(self, request):
         origin = request.headers.get('Origin')

@@ -83,6 +83,16 @@ leakybucket start --upstream-url https://your-provider.example/v1 --policy /abso
 ```
 
 The successful startup saves the upstream and policy paths for later restarts.
+It also saves the selected inspection mode, classifier URL/model, timeout and
+credential-file reference. It never copies classifier credential values into the
+connection profile. A semantic profile is restored when restarting from another
+shell; missing credentials or incomplete classifier settings stop startup.
+`LB_ALLOW_RULES_ONLY=true` does not override a saved semantic profile. To deliberately
+switch it to rules-only inspection, stop the service and use `start --rules-only`.
+Pre-fix profiles did not record inspection mode or classifier settings. They
+require one explicit migration: start with the original classifier environment
+configuration, or select `--rules-only`. An unknown legacy mode is never assumed
+to be rules-only. New empty profiles retain the documented local rules-only default.
 Explicit flags and the existing `LB_*` environment settings take precedence.
 `policy validate` without a path validates the saved policy. The repository's
 legacy `deploy/policy.yaml` path also resolves from an editable installation;
@@ -165,6 +175,19 @@ apply to chat requests.
 running. Stop it first, then restart with the desired configuration. This avoids
 silently appearing to apply settings to an existing process.
 
+## Built-in manual
+
+`leakybucket man` opens the bundled command manual in the system man viewer when
+stdout is interactive. If `man` is unavailable or output is redirected, it prints
+plain text. `leakybucket man --plain` always prints without a pager.
+
+`leakybucket man --install` installs a user page under
+`$XDG_DATA_HOME/man/man1`, normally `~/.local/share/man/man1/leakybucket.1`.
+Read it with `man leakybucket`; if a customized man path does not include that
+directory, use `man -l` with the path printed by the installer. No root permissions,
+service process or provider credentials are needed. The wheel also includes a
+standard `share/man/man1` page for package managers and pipx.
+
 ## Terminal commands
 
 ```sh
@@ -198,9 +221,19 @@ Send `Authorization: Bearer <service-token>`:
 
 - `GET /api/traces?model=MODEL&since=UNIX_SECONDS&until=UNIX_SECONDS&min_cost=USD&limit=100&offset=0`
 - `GET /api/traces/{id}` — full trace, including content if explicitly enabled.
-- `GET /api/status` — policy/storage health and alert failure/drop counters.
+- `GET /api/status` — shared readiness, audit health, gateway closure/capacity,
+  policy/storage health and alert failure/drop counters. `doctor`, background
+  startup and `/health/ready` use the same readiness decision.
 - `GET /api/live` — WebSocket; send `{"token":"<service-token>"}` as its first
   message within five seconds. Events are `connected`, `started` and `completed`.
+
+The authenticated chat quota is checked before custom policy evaluation and
+trace creation. Custom-policy denials consume the same tenant/user quota as other
+chat requests; requests rejected with HTTP 429 do not create new traces. Each
+request authenticates and consumes quota once. HTTP admission and the request
+deadline also cover authentication, policy processing and persistence.
+
+`trace --json` emits `{"trace":null}` when no request exists, with exit status 0.
 
 Trace listings contain metadata summaries; use the detail endpoint for spans
 and content. Maximum page size is 200. Newest traces come first, with offset

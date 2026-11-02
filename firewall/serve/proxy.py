@@ -11,6 +11,7 @@ import uuid
 import urllib.parse
 from typing import AsyncIterator
 import inspect
+from functools import cache
 
 from firewall.core.events import Actor, SecurityEvent, Source, SourceKind, Message
 from firewall.serve.auth import verified_actor
@@ -18,6 +19,15 @@ from firewall.serve.async_gateway import AsyncGateway, GatewayOverloaded, Gatewa
 from firewall.core.deadline import InspectionTimeout, positive_seconds
 from firewall.util.json import strict_json_loads as _strict_json
 from firewall.enforcement.rate_limits import RateLimiter
+
+
+_REQUEST_ACTOR = object()
+
+
+@cache
+def proxy_state_key():
+    from aiohttp import web
+    return web.AppKey('leakybucket.proxy_state', object)
 
 
 # Utilities
@@ -399,9 +409,7 @@ def build_openai_app(
     request_limiter = RateLimiter(default_rate_per_minute=request_rate_per_minute, capacity=request_burst)
     active = 0
 
-    async def execute(request):
-        if request.content_type != "application/json":
-            return web.json_response(_deny_error("Content-Type must be application/json"), status=415)
+    async def authorize(request, handler):
         actor = Actor()
         if actor_resolver is not None:
             try:
@@ -417,6 +425,13 @@ def build_openai_app(
         if not permitted:
             return web.json_response(_deny_error("Request quota exhausted", "rate_limited"),
                                      status=429, headers={"Retry-After": "1"})
+        request[_REQUEST_ACTOR] = actor
+        return await handler(request)
+
+    async def execute(request):
+        if request.content_type != "application/json":
+            return web.json_response(_deny_error("Content-Type must be application/json"), status=415)
+        actor = request[_REQUEST_ACTOR]
         try:
             body = _strict_json(await request.text())
         except (ValueError, UnicodeError, RecursionError):
@@ -425,14 +440,20 @@ def build_openai_app(
             {}, gw, up, upstream_base_url, actor=actor)
         return web.Response(status=status, body=payload, headers=response_headers)
 
-    async def handle(request):
+    @web.middleware
+    async def authenticate_and_limit(request, handler):
+        if request.path != '/v1/chat/completions':
+            return await handler(request)
+        return await handle(request, handler)
+
+    async def handle(request, handler):
         nonlocal active
         if active >= max_in_flight:
             return web.json_response(_deny_error("Request capacity exhausted", "overloaded"),
                                      status=503, headers={"Retry-After": "1"})
         active += 1
         try:
-            return await asyncio.wait_for(execute(request), request_timeout)
+            return await asyncio.wait_for(authorize(request, handler), request_timeout)
         except (asyncio.TimeoutError, InspectionTimeout):
             return web.json_response(_deny_error("Request deadline exceeded", "timeout"), status=504)
         except (GatewayOverloaded, GatewayClosed):
@@ -440,15 +461,21 @@ def build_openai_app(
                                      status=503, headers={"Retry-After": "1"})
         except web.HTTPRequestEntityTooLarge:
             return web.json_response(_deny_error("Request body exceeds byte limit"), status=413)
+        except web.HTTPException as error:
+            return web.Response(status=error.status, text=error.text, headers=error.headers)
         except Exception:
             return web.json_response(_deny_error("Request withheld after processing failure"), status=502)
         finally:
             active -= 1
 
-    async def health(request):
+    def snapshot():
         state = gw.snapshot()
-        ready = state["healthy"] and not state["closed"] and state["in_flight"] < state["capacity"] and active < max_in_flight
-        return web.json_response({"ready": ready}, status=200 if ready else 503)
+        ready = state['healthy'] and not state['closed'] and state['in_flight'] < state['capacity'] and active < max_in_flight
+        return {**state, 'ready': ready, 'http_in_flight': active, 'http_capacity': max_in_flight}
+
+    async def health(request):
+        ready = snapshot()['ready']
+        return web.json_response({'ready': ready}, status=200 if ready else 503)
 
     async def cleanup(app):
         await gw.close()
@@ -462,8 +489,9 @@ def build_openai_app(
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
-    app = web.Application(client_max_size=max_request_bytes, middlewares=[security_headers])
-    app.router.add_post("/v1/chat/completions", handle)
+    app = web.Application(client_max_size=max_request_bytes, middlewares=[security_headers, authenticate_and_limit])
+    app[proxy_state_key()] = snapshot
+    app.router.add_post("/v1/chat/completions", execute)
     app.router.add_get("/health/ready", health)
     app.on_cleanup.append(cleanup)
     return app

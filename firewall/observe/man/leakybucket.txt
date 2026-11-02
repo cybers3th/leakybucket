@@ -1,0 +1,386 @@
+NAME
+    leakybucket - inspect AI requests and operate a local firewall proxy
+
+SYNOPSIS
+    leakybucket start [OPTIONS]
+    leakybucket stop [--state-dir DIRECTORY]
+    leakybucket status [CONNECTION OPTIONS]
+    leakybucket doctor [CONNECTION OPTIONS]
+    leakybucket chat --model MODEL [--max-tokens NUMBER] [PROMPT]
+    leakybucket traces [FILTERS] [CONNECTION OPTIONS]
+    leakybucket trace [ID | latest] [CONNECTION OPTIONS]
+    leakybucket watch [--count NUMBER] [CONNECTION OPTIONS]
+    leakybucket policy validate [PATH]
+    leakybucket man [--plain | --install]
+    leakybucket --help
+    leakybucket --version
+    leakybucket < event.json
+
+DESCRIPTION
+    LeakyBucket is a CLI-operated security inspection layer for AI
+    applications. Its authenticated proxy checks prompts before provider
+    dispatch and checks responses before delivery. Decisions and request
+    metadata are recorded locally. Applications must send traffic through
+    the proxy for these checks to apply.
+
+    There is no browser UI. A provider's /v1 address is an API base URL,
+    not a webpage. The local proxy normally listens on 127.0.0.1:8080.
+    Its default upstream is http://127.0.0.1:11434/v1. A model provider
+    must be configured and running separately; no weights are downloaded.
+
+    The text proxy accepts supported OpenAI-compatible Chat Completions.
+    Native Anthropic Messages, multimodal requests and proxy-side tool
+    execution are not supported. Streams are buffered and inspected before
+    delivery. Inspection is defense in depth, not proof of model safety.
+
+QUICK START
+    Install the CLI with the observe extra, then run:
+
+        leakybucket start
+        leakybucket status
+        leakybucket doctor
+
+    New profiles default to built-in rules. The startup message identifies
+    the active inspection mode. Semantic inspection requires a separately
+    configured classifier and is never started automatically.
+
+    To use another model provider:
+
+        leakybucket stop
+        leakybucket start --upstream-url https://provider.example/v1
+        leakybucket doctor
+
+    Replace the example URL with your provider's actual API base URL.
+    Once the provider offers a model, replace MODEL with its real ID:
+
+        leakybucket chat --model MODEL 'Explain why rain forms.'
+        leakybucket traces
+        leakybucket trace
+
+    Run watch in a separate terminal, or run it last. Ctrl-C stops watching.
+    Use leakybucket stop to stop a local background service.
+
+START
+    start initializes private local credentials and launches the local
+    service in the background. It waits for firewall readiness and returns
+    to the shell. An already-running instance is not started a second time.
+
+    --upstream-url URL
+        Set the OpenAI-compatible provider base URL. HTTPS is required
+        outside loopback. Supply provider credentials using a secret file,
+        not in this URL. Stop an existing instance before changing settings.
+
+    --policy PATH
+        Use a YAML policy file. Otherwise use the saved policy, an explicit
+        LB_POLICY_PATH, or the default user policy. The actual path is shown.
+
+    --state-dir DIRECTORY, --bootstrap-dir DIRECTORY
+        Override the persistent state directory. Use the matching
+        --state-dir option with status, traces, trace, watch, chat, doctor
+        and stop when managing that instance.
+
+    --foreground
+        Stay attached for containers and service managers. Use Ctrl-C or
+        the service manager to stop it; stop manages background instances.
+
+    --rules-only
+        Explicitly select built-in rules without semantic classification.
+        Stop a running instance first. This deliberately changes a saved
+        semantic profile; it does not disable the built-in firewall checks.
+
+STOP
+    stop terminates the owned background process for the state directory.
+    It verifies process ownership and waits for a graceful shutdown.
+    Repeating stop when no local background instance exists is harmless.
+
+STATUS AND DOCTOR
+    status reports shared readiness, audit health, gateway capacity,
+    policy/storage health, the inspection mode and alert counters.
+    A reachable process may still report ready=false.
+
+    doctor also validates the configured policy and probes the provider's
+    /models endpoint. It distinguishes unreachable providers, missing
+    credentials, empty model lists and unsupported discovery responses.
+    It makes no completion request and downloads no model weights.
+
+    A successful /models response does not guarantee a successful chat.
+    Some custom providers do not implement model discovery. An HTTP 404
+    from an API base URL is not evidence that the firewall failed to start.
+
+CHAT
+    chat --model MODEL [--max-tokens NUMBER] [PROMPT]
+        Send one textual user message through the authenticated firewall.
+        If PROMPT is omitted, read it from piped stdin. An interactive
+        invocation must provide a prompt. The prompt limit is 50,000
+        characters; the proxy also enforces a request byte limit.
+
+    --model MODEL
+        Required model identifier. Use a real provider model ID, not the
+        literal placeholder MODEL. doctor lists discovered IDs when possible.
+
+    --max-tokens NUMBER
+        Response token cap: 1 through 4096; default 256.
+
+    --json
+        Emit the inspected completion envelope and trace ID as JSON.
+        Without it, print the answer and trace ID. Terminal control
+        characters in human output are escaped.
+
+    Example of piped input:
+
+        printf '%s' 'Explain clouds.' | leakybucket chat --model MODEL
+
+    Provider charges may apply. A block directs you to its trace;
+    upstream failures direct you to doctor. No automatic retry is made.
+
+TRACES
+    traces lists recent tenant-scoped request summaries, newest first.
+    Unknown provider usage and unconfigured costs are shown as unknown.
+
+    --model MODEL
+        Filter by exact model identifier.
+
+    --since SECONDS, --until SECONDS
+        Inclusive timestamp bounds expressed as Unix seconds.
+
+    --min-cost USD
+        Only show traces with a known estimated cost at least this amount.
+
+    --limit NUMBER
+        Page size, 1 through 200; default 100.
+
+    --offset NUMBER
+        Skip this many rows, 0 through 100000; default 0.
+
+    trace [ID | latest] shows details, spans and explicitly captured content.
+    Omitting ID selects the latest trace. Use an actual ID from traces;
+    TRACE_ID in examples is only a placeholder. An empty trace --json
+    query returns {"trace":null} with exit status 0.
+
+    watch prints completed requests live until Ctrl-C. --count NUMBER
+    stops after that many events; NUMBER must be positive. --json emits
+    one JSON trace per line. Slow consumers can miss events. Reconnect
+    and use traces to recover persisted history after a disconnection.
+
+CONNECTION OPTIONS
+    status, doctor, chat, traces, trace and watch accept:
+
+    --url URL
+        Firewall service root URL. Default: LB_URL, then the saved local
+        connection URL, then http://127.0.0.1:8080. This is the firewall
+        address, not the upstream model provider address.
+
+    --token-file PATH
+        Read the firewall service token from a file. Default:
+        LB_SERVICE_TOKEN_FILE, then the saved token reference, then the
+        persistent state directory's service-token file. This credential
+        is separate from the upstream provider's API key.
+
+    --ca-file PATH
+        Use this CA file to verify HTTPS connections to the firewall.
+        Default: LB_CA_FILE or the system CA store.
+
+    --state-dir DIRECTORY
+        Use another local instance's state and saved connection settings.
+
+    --json
+        Emit machine-readable JSON. watch emits newline-delimited JSON.
+
+    HTTPS is required outside loopback. HTTP redirects and environment
+    proxy settings are not used to forward service credentials elsewhere.
+
+INSPECTION MODES
+    New empty local profiles use built-in rules unless a semantic
+    classifier is configured. To configure one, supply all three:
+
+        LB_CLASSIFIER_URL
+        LB_CLASSIFIER_MODEL
+        LB_CLASSIFIER_TOKEN_FILE
+
+    The classifier URL must be a loopback HTTP server base URL. The
+    classifier client appends /v1/chat/completions to that base URL.
+    The referenced file contains its credential. The classifier is
+    separate from the upstream model being protected.
+
+    Successful startup records the mode, classifier URL/model, timeout
+    and credential-file reference. Credential values are not copied into
+    the connection profile. Restarts restore these settings. Missing
+    credentials or incomplete settings stop startup rather than silently
+    falling back to rules-only inspection.
+
+    Older profiles without a recorded mode require one explicit migration:
+    supply the original classifier settings, or use start --rules-only.
+    LB_ALLOW_RULES_ONLY=true does not override a saved semantic profile.
+
+POLICY
+    policy validate [PATH] checks a YAML policy without starting the
+    service. With no path, validate the saved or default user policy.
+    Relative paths normally start at the current directory. An editable
+    installation also resolves the legacy deploy/policy.yaml repository
+    path. Validation always prints the actual file being checked.
+
+    Policies require version: 1. Supported custom actions are block and
+    warn. model is an exact match; input_contains is a case-insensitive
+    literal match across textual messages. Conditions in one rule are
+    ANDed. Custom policies cannot override a built-in firewall block.
+
+    A valid policy with zero custom rules still uses the built-in checks.
+    Files are reloaded every second. Invalid changes fail readiness and
+    withhold new requests until a valid policy is restored. Requests
+    already in flight retain their admitted policy snapshot.
+
+    Pricing is configured per model using input_per_million and
+    output_per_million in USD. Estimates use reported prompt/completion
+    tokens. Unknown pricing or usage stays unknown; provider-specific
+    billing adjustments are not modeled.
+
+FILES
+    ~/.config/leakybucket/policy.yaml
+        Default user policy. XDG_CONFIG_HOME changes its base directory;
+        LB_CONFIG_DIR overrides the complete LeakyBucket config directory.
+
+    ~/.local/state/leakybucket/
+        Default persistent state directory. XDG_STATE_HOME changes its
+        base directory; LB_STATE_DIR overrides the complete directory.
+
+    service-token, audit-key
+        Private local firewall authentication and signed-audit credentials.
+        Keep them out of source control. They are not provider API keys.
+
+    upstream-token
+        Optional provider API key, read on startup. LB_UPSTREAM_TOKEN_FILE
+        can point to another file. Restart after changing its contents.
+
+    connection.json, service.pid, service.log
+        Saved connection/inspection references, process ownership lock,
+        and local background-service diagnostics.
+
+    traces.sqlite3, audit.jsonl
+        Persistent request history and a separate signed security audit.
+        There is no automatic history retention or archival in this release.
+
+ENVIRONMENT
+    LB_UPSTREAM_URL, LB_UPSTREAM_TOKEN_FILE
+        Provider base URL and provider credential-file path.
+
+    LB_CLASSIFIER_URL, LB_CLASSIFIER_MODEL, LB_CLASSIFIER_TOKEN_FILE
+        Semantic classifier base URL, model and credential-file path.
+
+    LB_INSPECTION_TIMEOUT_SECONDS
+        Inspection deadline in seconds; default 10. Semantic profiles
+        preserve the configured timeout across local restarts.
+
+    LB_BIND, LB_PORT
+        Service bind address and port; defaults 127.0.0.1 and 8080.
+        Local background mode permits loopback only. Managed nonloopback
+        deployments require --foreground and an appropriate TLS boundary.
+
+    LB_POLICY_PATH, LB_TRACE_DATABASE
+        Policy path and SQLite path or PostgreSQL DSN. PostgreSQL requires
+        the postgres extra and a separately provisioned database.
+
+    LB_CAPTURE_CONTENT
+        Set exactly true to store raw prompts and delivered responses.
+        Disabled by default. Captured content can contain secrets and PII;
+        protect the database and backups before enabling this option.
+
+    LB_SLACK_WEBHOOK_FILE
+        File containing an HTTPS hooks.slack.com/services/ webhook.
+        Configured cost/latency breaches use bounded, best-effort delivery;
+        no redirects or automatic retries. No webhook is contacted unless
+        configured. Prompt and response text are not included in alerts.
+
+    LB_CONFIG_DIR, LB_STATE_DIR, XDG_CONFIG_HOME, XDG_STATE_HOME
+        Persistent local directory overrides, described under FILES.
+
+    LB_URL, LB_SERVICE_TOKEN_FILE, LB_CA_FILE
+        Client connection defaults, described under CONNECTION OPTIONS.
+
+    LB_USER, LB_TENANT, LB_SESSION_ID, LB_AUDIT_KEY_FILE, LB_AUDIT_PATH
+        Managed identity and audit settings. Local bootstrap supplies
+        local defaults. leakybucket-serve requires explicit provisioning.
+
+LEGACY STDIN INSPECTION
+    With no command-line arguments, leakybucket reads one JSON event from
+    stdin and prints a JSON decision. It does not start a proxy or send a
+    model request. For example:
+
+        printf '%s' '{"input_text":"Hello"}' | leakybucket
+
+    Decisions include allow, sanitize, require_approval and block. An
+    integrating application must enforce the decision before forwarding
+    content, executing a tool or releasing a response.
+
+TROUBLESHOOTING
+    Command not found
+        Install the CLI in an isolated environment with the observe extra.
+        Ensure the executable directory is on PATH; run rehash in zsh if
+        necessary. Use leakybucket --version to verify the installation.
+
+    File not found
+        Use policy validate without a path for the configured user policy,
+        or supply the actual absolute path. Paths do not start at the
+        repository root merely because the CLI is installed from there.
+
+    Older profile has no saved inspection mode
+        Reapply the original semantic classifier settings on start, or
+        explicitly select start --rules-only if that is your intended mode.
+
+    Provider unreachable or browser displays 404
+        Run doctor. The default provider is not bundled, and /v1 is an API
+        prefix, not a webpage. Start your provider or configure its actual
+        base URL. The firewall's service port is normally 8080.
+
+    No traces yet
+        Send a request through the firewall, for example with chat. Calls
+        made directly to a model provider do not appear in proxy history.
+
+    HTTP 429
+        The tenant/user request quota was exhausted. Custom policy blocks
+        consume the same quota. Wait before retrying. Rate-rejected
+        requests do not create additional traces.
+
+    Service ready=false or doctor reports degraded
+        Inspect policy, storage, audit health and available capacity.
+        A reachable process is not necessarily ready. After fixing an
+        audit or storage failure, a service restart may be required.
+
+    See service.log in the state directory for background-start failures.
+    Restore invalid policies before restarting. Do not blindly retry
+    billable operations after a timeout or persistence failure: the model
+    provider may already have processed the request.
+
+MANUAL
+    man
+        Open this bundled manual with the system man viewer when available
+        and stdout is interactive. Otherwise print plain text. The manual
+        works without starting a service or provisioning credentials.
+
+    man --plain
+        Print the complete manual without a pager.
+
+    man --install
+        Install the page for man leakybucket in the user's man1 directory
+        under XDG_DATA_HOME/man, normally ~/.local/share/man/man1.
+        No root permissions are required. If a custom man configuration
+        does not discover it, use man -l with the printed installed path.
+
+EXIT STATUS
+    0   Successful command, empty latest-trace query, or Ctrl-C from watch.
+    1   doctor completed its checks but overall readiness is incomplete.
+    2   Invalid arguments, configuration error, unavailable service, failed
+        request, or another operational error.
+
+    The legacy stdin interface has its own decision JSON; allow/block is
+    not represented by the shell exit status. Provider success alone is
+    not evidence of a safe response.
+
+SEE ALSO
+    man(1). leakybucket-serve is an environment-configured server; its
+    configuration is described in the production runbook.
+    leakybucket-tls --help describes optional scoped TLS inspection.
+    Optional TLS inspection requires managed client trust and exact host
+    and path configuration; it does not inspect arbitrary traffic by itself.
+
+    The repository's docs/OBSERVABILITY.md, docs/PRODUCTION.md and
+    docs/TLS_INSPECTION.md contain deployment details and protocol limits.

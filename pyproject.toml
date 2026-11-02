@@ -32,3 +32,9 @@ include-package-data = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+"firewall.observe" = ["man/*.txt", "man/*.1"]
+
+[tool.setuptools.data-files]
+"share/man/man1" = ["firewall/observe/man/leakybucket.1"]

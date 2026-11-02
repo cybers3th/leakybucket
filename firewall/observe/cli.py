@@ -29,7 +29,13 @@ def bootstrap(directory):
 
 
 def main(argv=None):
-    from .local import connection, resolve_policy, save_connection, state_directory
+    from .local import (
+        connection,
+        inspection_settings,
+        resolve_policy,
+        save_connection,
+        state_directory,
+    )
 
     parser = argparse.ArgumentParser(prog='leakybucket')
     try:
@@ -38,9 +44,14 @@ def main(argv=None):
         installed_version = 'source checkout'
     parser.add_argument('--version', action='version', version='LeakyBucket ' + installed_version)
     commands = parser.add_subparsers(dest='command', required=True)
+    manual = commands.add_parser('man', help='Read the command manual')
+    manual_options = manual.add_mutually_exclusive_group()
+    manual_options.add_argument('--plain', action='store_true', help='Print the complete manual without a pager')
+    manual_options.add_argument('--install', action='store_true', help='Install the user man page for man leakybucket')
     start = commands.add_parser('start', help='Initialize and start the local service')
     start.add_argument('--policy', default=os.environ.get('LB_POLICY_PATH'))
     start.add_argument('--bootstrap-dir', '--state-dir', dest='bootstrap_dir', help='Override the persistent state directory')
+    start.add_argument('--rules-only', action='store_true', help='Explicitly disable semantic classification for this local profile')
     start.add_argument('--foreground', action='store_true', help='Stay in the foreground (containers and service managers)')
     start.add_argument('--upstream-url', help='OpenAI-compatible provider base URL')
     stop = commands.add_parser('stop', help='Stop the local background service')
@@ -72,6 +83,14 @@ def main(argv=None):
                 command.add_argument('--' + option)
     args = parser.parse_args(argv)
     try:
+        if args.command == 'man':
+            from .manual import install_manual, show_manual
+            if args.install:
+                print('Manual installed: ' + str(install_manual()))
+                print('Read it with: man leakybucket')
+            else:
+                show_manual(plain=args.plain)
+            return
         from .client import TraceClient, print_trace, safe, summary
 
         if args.command == 'stop':
@@ -133,7 +152,10 @@ def main(argv=None):
                 if trace_id == 'latest':
                     rows = client.get('/api/traces?limit=1')['traces']
                     if not rows:
-                        print('No traces yet. Send a model request through the proxy first.')
+                        if args.json:
+                            print(json.dumps({'trace': None}))
+                        else:
+                            print('No traces yet. Send a model request through the proxy first.')
                         return
                     trace_id = rows[0]['id']
                 if not 1 <= len(trace_id) <= 128:
@@ -183,8 +205,7 @@ def main(argv=None):
         if args.upstream_url:
             os.environ['LB_UPSTREAM_URL'] = args.upstream_url
         os.environ.setdefault('LB_UPSTREAM_URL', saved.get('upstream_url', 'http://127.0.0.1:11434/v1'))
-        if not os.environ.get('LB_CLASSIFIER_URL'):
-            os.environ.setdefault('LB_ALLOW_RULES_ONLY', 'true')
+        inspection = inspection_settings(saved, rules_only=args.rules_only)
         if (directory / 'upstream-token').is_file():
             os.environ.setdefault('LB_UPSTREAM_TOKEN_FILE', str(directory / 'upstream-token'))
         port = int(os.environ.get('LB_PORT', '8080'))
@@ -194,16 +215,20 @@ def main(argv=None):
         if not args.foreground and bind not in ('127.0.0.1', 'localhost', '::1'):
             raise ValueError('Local background mode requires a loopback bind; use --foreground for managed deployments')
         url = f'http://[::1]:{port}' if bind == '::1' else f'http://127.0.0.1:{port}'
+        saved_inspection = {key: saved.get(key, 'rules' if key == 'inspection_mode' else None) for key in inspection}
+        changed_settings = (inspection != saved_inspection
+                            or args.upstream_url and args.upstream_url != saved.get('upstream_url')
+                            or args.policy and str(path) != saved.get('policy_path'))
         if args.foreground:
-            save_connection(directory, url, os.environ['LB_SERVICE_TOKEN_FILE'], path, os.environ['LB_UPSTREAM_URL'])
+            save_connection(directory, url, os.environ['LB_SERVICE_TOKEN_FILE'], path, os.environ['LB_UPSTREAM_URL'], inspection)
             from firewall.serve.__main__ import main as serve
             serve()
         else:
             from .service import start as start_service
             if start_service(directory, url, os.environ['LB_SERVICE_TOKEN_FILE']):
-                save_connection(directory, url, os.environ['LB_SERVICE_TOKEN_FILE'], path, os.environ['LB_UPSTREAM_URL'])
-            elif (args.upstream_url and args.upstream_url != saved.get('upstream_url') or args.policy and str(path) != saved.get('policy_path')):
-                raise ValueError('Stop the running service with leakybucket stop before applying changed provider or policy settings.')
+                save_connection(directory, url, os.environ['LB_SERVICE_TOKEN_FILE'], path, os.environ['LB_UPSTREAM_URL'], inspection)
+            elif changed_settings:
+                raise ValueError('Stop the running service with leakybucket stop before applying changed provider, policy or inspection settings.')
     except FileNotFoundError as exc:
         missing = ascii(str(Path(exc.filename).absolute())) if exc.filename else 'a required file'
         parser.exit(2, f'File not found: {missing}.\nUse leakybucket policy validate for the default policy, or supply an absolute path.\n')

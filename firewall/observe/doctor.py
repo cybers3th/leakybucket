@@ -63,12 +63,14 @@ def diagnose(directory, saved, *, url=None, token_file=None, ca_file=None):
     if Path(token_file).is_file():
         try:
             status = TraceClient(service_url, token_file, ca_file).get('/api/status')
-            report['service'] = {'state': 'ready' if status['policy_healthy'] and status['storage_healthy'] else 'degraded',
+            report['service'] = {'state': 'ready' if status.get('ready') is True else 'degraded',
                                  'url': service_url, **status}
         except (ValueError, OSError):
             report['service'] = {'state': 'unreachable', 'url': service_url}
     if report['service']['state'] in ('not_initialized', 'unreachable'):
         report['next_steps'].append('Start the service: leakybucket start')
+    if report['service']['state'] == 'degraded':
+        report['next_steps'].append('Inspect readiness, audit health and capacity; restart an older service after updating it.')
     policy_path = Path(os.environ.get('LB_POLICY_PATH') or saved.get('policy_path') or config_directory() / 'policy.yaml')
     try:
         policy = load_policy(policy_path)
